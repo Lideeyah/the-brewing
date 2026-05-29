@@ -61,6 +61,139 @@ Frame execution as ORCHESTRATION of work toward the objective. Do not invent an
 agent marketplace, registry, or scheduler. Be concrete and concise."""
 
 
+_EVAL_SYSTEM = """You are the Brewing Coordination Copilot acting as a governance auditor.
+
+You review the recorded EXECUTION of an objective against its governance
+validation criteria and produce a structured, defensible governance evaluation.
+You are advisory only: a human reviewer retains final approval authority and may
+override your recommendation.
+
+Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
+{
+  "recommendation": "approved" | "approved_with_conditions" | "rejected",
+  "reasoning": one short paragraph justifying the recommendation, grounded in the
+               criteria and the actual execution outputs,
+  "findings": [
+     {"criterion": the criterion text, "met": true|false, "assessment": one sentence}
+  ],
+  "conditions": [short remediation strings]  // required follow-ups; non-empty ONLY
+                                              // when recommendation is approved_with_conditions
+}
+
+Judge strictly against the provided validation criteria and execution outputs.
+Be specific, conservative, and concise. If an output is missing or insufficient
+to verify a criterion, mark it not met and say why. Use "approved_with_conditions"
+when the objective is substantially met but non-blocking follow-ups remain."""
+
+_VALID_RECOMMENDATIONS = {"approved", "approved_with_conditions", "rejected"}
+
+
+def _heuristic_evaluation(criteria: list[str], steps: list[dict]) -> dict:
+    """Deterministic governance evaluation used when the model is unavailable."""
+    completed = all(s.get("status") == "completed" for s in steps) if steps else False
+    findings = [
+        {
+            "criterion": c,
+            "met": completed,
+            "assessment": (
+                "Recorded execution outputs cover this criterion."
+                if completed
+                else "Execution did not complete; criterion cannot be verified."
+            ),
+        }
+        for c in (criteria or ["Deliverable matches the stated intent"])
+    ]
+    return {
+        "recommendation": "approved" if completed else "rejected",
+        "reasoning": (
+            "All orchestration steps completed and produced recorded outputs; "
+            "no criteria violations were detected by automated review."
+            if completed
+            else "Execution did not complete successfully, so the validation "
+            "criteria cannot be confirmed."
+        ),
+        "findings": findings,
+        "conditions": [],
+        "_source": "heuristic",
+    }
+
+
+def _normalize_evaluation(data: dict) -> dict:
+    rec = str(data.get("recommendation", "")).strip().lower().replace(" ", "_")
+    if rec not in _VALID_RECOMMENDATIONS:
+        rec = "approved_with_conditions"
+    data["recommendation"] = rec
+    if not isinstance(data.get("findings"), list):
+        data["findings"] = []
+    conditions = data.get("conditions")
+    data["conditions"] = (
+        [str(c) for c in conditions] if isinstance(conditions, list) else []
+    )
+    if rec != "approved_with_conditions":
+        data["conditions"] = []
+    data["reasoning"] = str(data.get("reasoning", "")).strip()
+    return data
+
+
+async def evaluate_governance(
+    *,
+    intent: str,
+    summary: str | None,
+    criteria: list[str],
+    steps: list[dict],
+) -> dict:
+    """Evaluate recorded execution against governance criteria.
+
+    Returns {recommendation, reasoning, findings, conditions, _source}. Always
+    degrades to a deterministic heuristic so the audit stage never hard-fails.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return _heuristic_evaluation(criteria, steps)
+
+    try:
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+
+        criteria_block = "\n".join(f"- {c}" for c in criteria) or "- (none specified)"
+        outputs_block = (
+            "\n".join(
+                f"{i + 1}. [{s.get('status', 'unknown')}] {s.get('title', 'step')}: "
+                f"{s.get('output') or '(no output recorded)'}"
+                for i, s in enumerate(steps)
+            )
+            or "(no execution steps recorded)"
+        )
+        user_msg = (
+            f"Operational intent:\n{intent}\n\n"
+            f"Objective summary:\n{summary or '(none)'}\n\n"
+            f"Governance validation criteria:\n{criteria_block}\n\n"
+            f"Recorded execution outputs:\n{outputs_block}"
+        )
+
+        async with _pacemaker:
+            await asyncio.sleep(settings.orchestration_pacemaker_seconds)
+            resp = await client.messages.create(
+                model=settings.copilot_model,
+                max_tokens=1500,
+                system=_EVAL_SYSTEM,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+
+        text = "".join(
+            block.text for block in resp.content if getattr(block, "type", None) == "text"
+        )
+        evaluation = _normalize_evaluation(_extract_json(text))
+        evaluation["_source"] = settings.copilot_model
+        return evaluation
+    except Exception as exc:  # noqa: BLE001 — never let governance hard-fail
+        logger.warning("Copilot governance evaluation fell back to heuristic: %s", exc)
+        fallback = _heuristic_evaluation(criteria, steps)
+        fallback["_source"] = "heuristic_fallback"
+        return fallback
+
+
 def _heuristic_structure(intent: str, title: str | None) -> dict:
     """Deterministic fallback used when the model is unavailable."""
     derived_title = title or (intent.strip().split("\n")[0][:80] or "New objective")

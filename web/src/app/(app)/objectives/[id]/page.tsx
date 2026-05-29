@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ArrowLeft, Check, ExternalLink, Sparkles, X } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
@@ -43,6 +43,7 @@ export default async function ObjectiveDetailPage({
   const escrow = obj.escrow;
   const canLockEscrow = obj.status === "copilot_structured";
   const execution = obj.execution;
+  const evaluation = obj.evaluation;
   const audit = obj.audit;
   const settlement = obj.settlement;
   const auditApproved = audit?.status === "approved";
@@ -85,6 +86,7 @@ export default async function ObjectiveDetailPage({
                 <LifecycleActions
                   objectiveId={obj.id}
                   status={obj.status}
+                  hasEvaluation={!!evaluation}
                   auditApproved={auditApproved}
                 />
               )}
@@ -292,23 +294,116 @@ export default async function ObjectiveDetailPage({
             </Panel>
           )}
 
+          {/* AI governance evaluation (advisory) */}
+          {evaluation && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="Governance evaluation"
+                meta={`Copilot · ${evaluation.source}`}
+              />
+              <PanelBody className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles size={14} className="text-accent" />
+                  <span className="text-[12px] text-muted">
+                    Copilot recommendation
+                  </span>
+                  <StatusPill tone={recMeta(evaluation.recommendation).tone}>
+                    {recMeta(evaluation.recommendation).label}
+                  </StatusPill>
+                </div>
+
+                {evaluation.reasoning && (
+                  <p className="text-[13px] leading-relaxed text-secondary">
+                    {evaluation.reasoning}
+                  </p>
+                )}
+
+                <div>
+                  <p className="mb-2 font-operational text-[11px] uppercase tracking-wider text-muted">
+                    Criteria findings
+                  </p>
+                  <ul className="space-y-2">
+                    {evaluation.findings.map((f, i) => (
+                      <li key={i} className="flex gap-2.5">
+                        <span
+                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full ${
+                            f.met
+                              ? "bg-success/15 text-success"
+                              : "bg-failure/15 text-failure"
+                          }`}
+                        >
+                          {f.met ? <Check size={11} /> : <X size={11} />}
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-[13px] text-foreground">
+                            {f.criterion}
+                          </div>
+                          {f.assessment && (
+                            <div className="text-[12px] text-muted">
+                              {f.assessment}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                {evaluation.conditions.length > 0 && (
+                  <div>
+                    <p className="mb-1.5 font-operational text-[11px] uppercase tracking-wider text-muted">
+                      Conditions
+                    </p>
+                    <ul className="space-y-1.5">
+                      {evaluation.conditions.map((c, i) => (
+                        <li
+                          key={i}
+                          className="flex gap-2 text-[13px] text-secondary"
+                        >
+                          <span className="text-pending">·</span>
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <p className="border-t border-border pt-3 text-[11px] text-muted">
+                  Advisory only — a human reviewer issues the binding decision and
+                  may override this recommendation.
+                </p>
+              </PanelBody>
+            </Panel>
+          )}
+
           {/* Validation + settlement outcome */}
           {(audit || settlement) && (
             <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
               {audit && (
                 <Panel>
-                  <PanelHeader title="Governance validation" />
+                  <PanelHeader title="Reviewer decision" meta="human-authoritative" />
                   <PanelBody className="space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between gap-2">
                       <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
                         Decision
                       </p>
-                      <StatusPill
-                        tone={auditApproved ? "success" : "failure"}
-                      >
-                        {audit.status}
-                      </StatusPill>
+                      <div className="flex items-center gap-1.5">
+                        {audit.overridden && (
+                          <StatusPill tone="pending" dot={false}>
+                            override
+                          </StatusPill>
+                        )}
+                        <StatusPill tone={auditApproved ? "success" : "failure"}>
+                          {audit.status}
+                        </StatusPill>
+                      </div>
                     </div>
+                    {audit.recommendation && (
+                      <Field
+                        label="Copilot recommended"
+                        value={recMeta(audit.recommendation).label}
+                      />
+                    )}
                     {audit.notes && (
                       <p className="text-[13px] leading-relaxed text-secondary">
                         {audit.notes}
@@ -427,6 +522,21 @@ export default async function ObjectiveDetailPage({
       </div>
     </>
   );
+}
+
+type RecTone = "success" | "pending" | "failure" | "neutral";
+
+function recMeta(rec: string): { tone: RecTone; label: string } {
+  switch (rec) {
+    case "approved":
+      return { tone: "success", label: "Approved" };
+    case "approved_with_conditions":
+      return { tone: "pending", label: "Approved with conditions" };
+    case "rejected":
+      return { tone: "failure", label: "Rejected" };
+    default:
+      return { tone: "neutral", label: rec };
+  }
 }
 
 function Field({

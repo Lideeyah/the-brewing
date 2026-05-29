@@ -21,7 +21,8 @@ export function eventTone(kind: string): Tone {
   if (kind.includes("settle") || kind.includes("approved")) return "success";
   if (kind.includes("dispute") || kind.includes("slash") || kind.includes("fail"))
     return "failure";
-  if (kind.includes("lock") || kind.includes("execut")) return "active";
+  if (kind.includes("lock") || kind.includes("execut") || kind.includes("evaluat"))
+    return "active";
   return "neutral";
 }
 

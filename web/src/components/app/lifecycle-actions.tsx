@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   Loader2,
   Play,
+  Scale,
   Wallet,
   XCircle,
 } from "lucide-react";
 
 import {
-  auditObjective,
+  decideAudit,
+  evaluateGovernance,
   executeObjective,
   settleObjective,
   type LifecycleResult,
@@ -24,10 +26,12 @@ type Run = () => Promise<LifecycleResult>;
 export function LifecycleActions({
   objectiveId,
   status,
+  hasEvaluation = false,
   auditApproved,
 }: {
   objectiveId: string;
   status: ObjectiveStatus;
+  hasEvaluation?: boolean;
   auditApproved?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
@@ -68,11 +72,26 @@ export function LifecycleActions({
         </button>
       )}
 
-      {status === "under_audit" && (
+      {status === "under_audit" && !hasEvaluation && (
+        <button
+          disabled={pending}
+          onClick={() => run(() => evaluateGovernance(objectiveId))}
+          className="flex items-center gap-2 rounded-lg bg-foreground px-3.5 py-2 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
+        >
+          {pending ? (
+            <Loader2 size={15} className="animate-spin" />
+          ) : (
+            <Scale size={15} />
+          )}
+          Run governance evaluation
+        </button>
+      )}
+
+      {status === "under_audit" && hasEvaluation && (
         <div className="flex flex-wrap gap-2">
           <button
             disabled={pending}
-            onClick={() => run(() => auditObjective(objectiveId, "approve"))}
+            onClick={() => run(() => decideAudit(objectiveId, "approve"))}
             className="flex items-center gap-2 rounded-lg bg-foreground px-3.5 py-2 text-[13px] font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             {pending ? (
@@ -80,11 +99,11 @@ export function LifecycleActions({
             ) : (
               <CheckCircle2 size={15} />
             )}
-            Validate &amp; approve
+            Approve decision
           </button>
           <button
             disabled={pending}
-            onClick={() => run(() => auditObjective(objectiveId, "reject"))}
+            onClick={() => run(() => decideAudit(objectiveId, "reject"))}
             className="flex items-center gap-2 rounded-lg border border-border-strong px-3.5 py-2 text-[13px] font-medium text-secondary transition-colors hover:text-foreground disabled:opacity-60"
           >
             <XCircle size={15} />

@@ -58,10 +58,33 @@ export interface ExecutionRun {
   steps: ExecutionStep[];
 }
 
+export interface GovernanceFinding {
+  criterion: string;
+  met: boolean;
+  assessment?: string | null;
+}
+
+export type Recommendation =
+  | "approved"
+  | "approved_with_conditions"
+  | "rejected";
+
+export interface GovernanceEvaluation {
+  id: string;
+  recommendation: Recommendation;
+  reasoning: string;
+  findings: GovernanceFinding[];
+  conditions: string[];
+  source: string;
+  created_at: string;
+}
+
 export interface AuditReview {
   id: string;
   status: string;
   notes?: string | null;
+  recommendation?: string | null;
+  overridden: boolean;
   created_at: string;
 }
 
@@ -87,6 +110,7 @@ export interface ObjectiveDetail extends Objective {
   escrow?: Escrow | null;
   treasury_address?: string | null;
   execution?: ExecutionRun | null;
+  evaluation?: GovernanceEvaluation | null;
   audit?: AuditReview | null;
   settlement?: Settlement | null;
 }

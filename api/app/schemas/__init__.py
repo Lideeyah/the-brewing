@@ -112,10 +112,28 @@ class ExecutionRunOut(BaseModel):
     steps: list[ExecutionStepOut]
 
 
+class GovernanceFinding(BaseModel):
+    criterion: str
+    met: bool
+    assessment: str | None = None
+
+
+class GovernanceEvaluationOut(BaseModel):
+    id: str
+    recommendation: str  # approved | approved_with_conditions | rejected
+    reasoning: str
+    findings: list[GovernanceFinding]
+    conditions: list[str]
+    source: str
+    created_at: datetime
+
+
 class AuditReviewOut(BaseModel):
     id: str
     status: str
     notes: str | None = None
+    recommendation: str | None = None
+    overridden: bool = False
     created_at: datetime
 
 
@@ -145,6 +163,7 @@ class ObjectiveDetailOut(ObjectiveOut):
     escrow: EscrowOut | None = None
     treasury_address: str | None = None
     execution: ExecutionRunOut | None = None
+    evaluation: GovernanceEvaluationOut | None = None
     audit: AuditReviewOut | None = None
     settlement: SettlementOut | None = None
 

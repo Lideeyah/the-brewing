@@ -192,12 +192,36 @@ class ExecutionStep(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
+class GovernanceEvaluation(SQLModel, table=True):
+    """An advisory, AI-produced governance evaluation of an execution.
+
+    The Coordination Copilot reviews recorded execution outputs against the
+    governance validation criteria and recommends approve / approve-with-
+    conditions / reject, with reasoning and per-criterion findings. It is
+    advisory: the human AuditReview is authoritative and may override it.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    objective_id: str = Field(foreign_key="objective.id", index=True)
+    recommendation: str  # "approved" | "approved_with_conditions" | "rejected"
+    reasoning: str = ""
+    findings: list = Field(default_factory=list, sa_column=Column(JSON))
+    conditions: list = Field(default_factory=list, sa_column=Column(JSON))
+    source: str = "copilot"  # model id or "heuristic"
+    created_at: datetime = Field(default_factory=_now)
+
+
 class AuditReview(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
     status: AuditStatus = AuditStatus.PENDING
     notes: str | None = None
     reviewer_id: str | None = Field(default=None, foreign_key="user.id")
+    # Link back to the AI evaluation the human acted on, and whether the human
+    # overrode its recommendation. Authoritative decision stays human.
+    evaluation_id: str | None = Field(default=None, foreign_key="governanceevaluation.id")
+    recommendation: str | None = None  # recommendation present at decision time
+    overridden: bool = False
     created_at: datetime = Field(default_factory=_now)
 
 

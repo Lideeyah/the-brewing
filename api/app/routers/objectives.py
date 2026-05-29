@@ -29,6 +29,7 @@ from app.models import (
     EscrowStatus,
     ExecutionRun,
     ExecutionStep,
+    GovernanceEvaluation,
     GovernanceEvent,
     Objective,
     ObjectiveStatus,
@@ -45,7 +46,9 @@ from app.schemas import (
     EscrowOut,
     ExecutionRunOut,
     ExecutionStepOut,
+    GovernanceEvaluationOut,
     GovernanceEventOut,
+    GovernanceFinding,
     ObjectiveCreate,
     ObjectiveDetailOut,
     ObjectiveOut,
@@ -362,19 +365,109 @@ def execute_objective(
     return _detail(session, obj)
 
 
-@router.post("/{objective_id}/audit", response_model=ObjectiveDetailOut)
-def audit_objective(
+def _latest_evaluation(
+    session: Session, objective_id: str
+) -> GovernanceEvaluation | None:
+    return session.exec(
+        select(GovernanceEvaluation)
+        .where(GovernanceEvaluation.objective_id == objective_id)
+        .order_by(GovernanceEvaluation.created_at.desc())
+    ).first()
+
+
+@router.post("/{objective_id}/audit/evaluate", response_model=ObjectiveDetailOut)
+async def evaluate_governance_route(
+    objective_id: str,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    """AI-powered governance evaluation (advisory).
+
+    The Coordination Copilot reviews the recorded execution outputs against the
+    objective's validation criteria and produces a structured recommendation
+    (approved / approved_with_conditions / rejected) with reasoning and
+    per-criterion findings. This does NOT settle or transition the objective —
+    a human reviewer still issues the authoritative decision via /audit/decide.
+    """
+    obj = _get_owned_objective(session, workspace, objective_id)
+
+    if obj.status != ObjectiveStatus.UNDER_AUDIT:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Objective must complete execution before it can be evaluated.",
+        )
+
+    criteria = obj.governance_config.get("validation_criteria") or []
+    run = session.exec(
+        select(ExecutionRun)
+        .where(ExecutionRun.objective_id == obj.id)
+        .order_by(ExecutionRun.created_at.desc())
+    ).first()
+    steps = (
+        session.exec(
+            select(ExecutionStep)
+            .where(ExecutionStep.run_id == run.id)
+            .order_by(ExecutionStep.index.asc())
+        ).all()
+        if run
+        else []
+    )
+    step_dicts = [
+        {"title": s.title, "status": s.status.value, "output": s.output} for s in steps
+    ]
+
+    result = await copilot.evaluate_governance(
+        intent=obj.intent,
+        summary=obj.summary,
+        criteria=list(criteria),
+        steps=step_dicts,
+    )
+
+    evaluation = GovernanceEvaluation(
+        objective_id=obj.id,
+        recommendation=result["recommendation"],
+        reasoning=result.get("reasoning", ""),
+        findings=result.get("findings", []),
+        conditions=result.get("conditions", []),
+        source=result.get("_source", "copilot"),
+    )
+    session.add(evaluation)
+    session.flush()
+
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="audit.evaluated",
+        message=(
+            f"Coordination Copilot recommends '{evaluation.recommendation}' "
+            "after reviewing execution against governance criteria."
+        ),
+        actor="copilot",
+        data={
+            "recommendation": evaluation.recommendation,
+            "source": evaluation.source,
+            "criteria_count": len(criteria),
+        },
+    )
+    session.commit()
+    session.refresh(obj)
+    return _detail(session, obj)
+
+
+@router.post("/{objective_id}/audit/decide", response_model=ObjectiveDetailOut)
+def decide_audit(
     body: AuditDecision,
     objective_id: str,
     user: User = Depends(get_current_user),
     workspace: Workspace = Depends(current_workspace),
     session: Session = Depends(get_session),
 ) -> ObjectiveDetailOut:
-    """Validation against the governance criteria.
+    """Human governance decision (authoritative).
 
-    Records a governance decision (approve/reject) on the completed execution
-    and advances the objective to GOVERNANCE_DECISION, where settlement (release
-    or slash) is authorized.
+    A reviewer issues the binding approve/reject on the execution, optionally
+    overriding the Copilot's recommendation. Requires an AI evaluation first so
+    the decision is governance-aware. Advances UNDER_AUDIT -> GOVERNANCE_DECISION.
     """
     obj = _get_owned_objective(session, workspace, objective_id)
 
@@ -384,19 +477,37 @@ def audit_objective(
             detail="Objective must complete execution before it can be validated.",
         )
 
+    evaluation = _latest_evaluation(session, obj.id)
+    if evaluation is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Run the governance evaluation before issuing a decision.",
+        )
+
     approved = body.decision.strip().lower() != "reject"
+    # The Copilot recommends settlement unless it explicitly rejected.
+    recommended_approve = evaluation.recommendation != "rejected"
+    overridden = approved != recommended_approve
     criteria = obj.governance_config.get("validation_criteria") or []
+
+    default_note = (
+        "Reviewer approved the execution against the governance criteria."
+        if approved
+        else "Reviewer rejected the execution against the governance criteria."
+    )
+    if overridden:
+        default_note += (
+            f" (Overrides Copilot recommendation: '{evaluation.recommendation}'.)"
+        )
 
     review = AuditReview(
         objective_id=obj.id,
         status=AuditStatus.APPROVED if approved else AuditStatus.FAILED,
-        notes=body.notes
-        or (
-            "Execution satisfies the governance validation criteria."
-            if approved
-            else "Execution failed to satisfy the governance validation criteria."
-        ),
+        notes=body.notes or default_note,
         reviewer_id=user.id,
+        evaluation_id=evaluation.id,
+        recommendation=evaluation.recommendation,
+        overridden=overridden,
     )
     session.add(review)
 
@@ -409,12 +520,18 @@ def audit_objective(
         objective_id=obj.id,
         kind="audit.approved" if approved else "audit.failed",
         message=(
-            "Governance validated the execution against criteria; settlement authorized."
+            "Reviewer approved the execution; settlement authorized."
             if approved
-            else "Governance rejected the execution; escrow will be slashed."
-        ),
+            else "Reviewer rejected the execution; escrow will be slashed."
+        )
+        + (" Copilot recommendation overridden." if overridden else ""),
         actor=user.id,
-        data={"approved": approved, "criteria_count": len(criteria)},
+        data={
+            "approved": approved,
+            "recommendation": evaluation.recommendation,
+            "overridden": overridden,
+            "criteria_count": len(criteria),
+        },
     )
     session.commit()
     session.refresh(obj)
@@ -608,6 +725,32 @@ def _execution_out(
     )
 
 
+def _evaluation_out(
+    evaluation: GovernanceEvaluation | None,
+) -> GovernanceEvaluationOut | None:
+    if evaluation is None:
+        return None
+    findings = []
+    for f in evaluation.findings or []:
+        if isinstance(f, dict):
+            findings.append(
+                GovernanceFinding(
+                    criterion=str(f.get("criterion", "")),
+                    met=bool(f.get("met")),
+                    assessment=f.get("assessment"),
+                )
+            )
+    return GovernanceEvaluationOut(
+        id=evaluation.id,
+        recommendation=evaluation.recommendation,
+        reasoning=evaluation.reasoning,
+        findings=findings,
+        conditions=[str(c) for c in (evaluation.conditions or [])],
+        source=evaluation.source,
+        created_at=evaluation.created_at,
+    )
+
+
 def _audit_out(review: AuditReview | None) -> AuditReviewOut | None:
     if review is None:
         return None
@@ -615,6 +758,8 @@ def _audit_out(review: AuditReview | None) -> AuditReviewOut | None:
         id=review.id,
         status=review.status.value,
         notes=review.notes,
+        recommendation=review.recommendation,
+        overridden=review.overridden,
         created_at=review.created_at,
     )
 
@@ -668,6 +813,7 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         .where(AuditReview.objective_id == obj.id)
         .order_by(AuditReview.created_at.desc())
     ).first()
+    evaluation = _latest_evaluation(session, obj.id)
     settlement = session.exec(
         select(Settlement)
         .where(Settlement.objective_id == obj.id)
@@ -694,6 +840,7 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         escrow=_escrow_out(escrow),
         treasury_address=treasury.address if treasury else None,
         execution=_execution_out(run, list(steps)),
+        evaluation=_evaluation_out(evaluation),
         audit=_audit_out(review),
         settlement=_settlement_out(settlement, payout_address),
     )

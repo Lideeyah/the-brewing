@@ -69,13 +69,30 @@ export async function executeObjective(
   }
 }
 
-/** Validation: record a governance decision (approve/reject) on the execution. */
-export async function auditObjective(
+/**
+ * Validation (AI): run the Coordination Copilot's governance evaluation. This is
+ * advisory — it produces a recommendation + reasoning and does not transition
+ * the objective. A human still issues the binding decision via decideAudit.
+ */
+export async function evaluateGovernance(
+  objectiveId: string,
+): Promise<LifecycleResult> {
+  try {
+    await apiPost<ObjectiveDetail>(`/objectives/${objectiveId}/audit/evaluate`);
+    revalidatePath(`/objectives/${objectiveId}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/** Validation (human): authoritative approve/reject, may override the Copilot. */
+export async function decideAudit(
   objectiveId: string,
   decision: "approve" | "reject",
 ): Promise<LifecycleResult> {
   try {
-    await apiPost<ObjectiveDetail>(`/objectives/${objectiveId}/audit`, {
+    await apiPost<ObjectiveDetail>(`/objectives/${objectiveId}/audit/decide`, {
       decision,
     });
     revalidatePath(`/objectives/${objectiveId}`);
