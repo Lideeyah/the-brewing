@@ -1,0 +1,90 @@
+@import "tailwindcss";
+
+/*
+  BREWING — Canonical Design System
+  Direction 4: metallic blue-gray infrastructural identity.
+  Direction 3: institutional restraint, observability-first hierarchy.
+*/
+
+@theme {
+  /* Core background system */
+  --color-background: #020617;
+  --color-surface: #0f172a;
+  --color-elevated: #111827;
+
+  /* Atmospheric identity — use sparingly, never as dominant branding */
+  --color-accent: #7c8ba1;
+
+  /* Functional neutral */
+  --color-neutral: #94a3b8;
+
+  /* Text */
+  --color-foreground: #e2e8f0;
+  --color-secondary: #94a3b8;
+  --color-muted: #64748b;
+
+  /* Structural borders (subtle, infrastructural) */
+  --color-border: #1e293b;
+  --color-border-strong: #334155;
+
+  /* Semantic operational states — semantic ONLY, never dominant */
+  --color-success: #2fb98a;
+  --color-pending: #c89b2c;
+  --color-failure: #d16a7e;
+
+  /* Typography */
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, "SFMono-Regular", monospace;
+
+  /* Border radius — infrastructural, not playful */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-feature-settings: "ss01", "cv01";
+}
+
+/* Operational / system text — JetBrains Mono, tight tracking */
+.font-operational {
+  font-family: var(--font-mono);
+  letter-spacing: -0.025em;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+/* Headlines — Geist, tight authoritative tracking */
+.text-headline {
+  letter-spacing: -0.02em;
+  line-height: 0.98;
+  font-weight: 700;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+  color: var(--color-foreground);
+}
+
+/* Custom scrollbar — restrained, operational */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-background);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 9999px;
+  border: 2px solid var(--color-background);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-neutral);
+}
