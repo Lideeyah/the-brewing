@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowUpRight, Sparkles } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
+import { LifecyclePipeline } from "@/components/app/lifecycle-pipeline";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { apiGet } from "@/lib/api";
@@ -24,6 +25,8 @@ export default async function DashboardPage() {
   const metrics = overview?.metrics ?? [];
   const objectives = overview?.objectives ?? [];
   const events = overview?.recent_events ?? [];
+  const statusCounts = overview?.status_counts ?? {};
+  const totalObjectives = Object.values(statusCounts).reduce((a, b) => a + b, 0);
 
   return (
     <>
@@ -50,6 +53,17 @@ export default async function DashboardPage() {
             </Panel>
           ))}
         </div>
+
+        {/* Lifecycle pipeline — the Intent -> Settlement loop at a glance */}
+        {totalObjectives > 0 && (
+          <Panel className="mt-4">
+            <PanelHeader
+              title="Lifecycle"
+              meta="Intent → Settlement"
+            />
+            <LifecyclePipeline statusCounts={statusCounts} />
+          </Panel>
+        )}
 
         {/* Coordination + timeline */}
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -127,13 +141,18 @@ export default async function DashboardPage() {
                         )}
                       </div>
                       <div className="pb-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="font-operational text-[10px] text-muted">
                             {formatTime(e.created_at)}
                           </span>
                           <span className="font-operational text-[10px] text-accent">
                             {e.kind}
                           </span>
+                          {e.actor && (
+                            <span className="font-operational text-[10px] text-muted">
+                              · {e.actor}
+                            </span>
+                          )}
                         </div>
                         <p className="mt-0.5 text-[12px] leading-snug text-secondary">
                           {e.message}

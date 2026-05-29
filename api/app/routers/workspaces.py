@@ -17,7 +17,15 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.domain.settlement import get_settlement_provider
 from app.domain.settlement.provider import WalletRef
-from app.models import GovernanceEvent, Objective, ObjectiveStatus, User, Workspace
+from app.models import (
+    GovernanceEvent,
+    Objective,
+    ObjectiveStatus,
+    Settlement,
+    SettlementStatus,
+    User,
+    Workspace,
+)
 from app.routers.objectives import _event_out, _objective_out
 from app.schemas import OverviewMetric, OverviewOut
 from app.services import workspace as workspace_service
@@ -32,6 +40,13 @@ _ACTIVE_STATES = {
     ObjectiveStatus.GOVERNANCE_DECISION,
 }
 _LOCKED_STATES = _ACTIVE_STATES  # escrow is locked across the active span
+
+
+def _as_decimal(value: str | None) -> Decimal:
+    try:
+        return Decimal(value or "0")
+    except Exception:  # noqa: BLE001
+        return Decimal("0")
 
 
 def _treasury_balance(session: Session, workspace_id: str) -> str:
@@ -70,7 +85,6 @@ def overview(
 
     status_counts: dict[str, int] = {}
     locked_total = Decimal("0")
-    settled_count = 0
     for o in objectives:
         status_counts[o.status.value] = status_counts.get(o.status.value, 0) + 1
         if o.status in _LOCKED_STATES:
@@ -78,14 +92,13 @@ def overview(
                 locked_total += Decimal(o.escrow_amount_usdc or "0")
             except Exception:  # noqa: BLE001
                 pass
-        if o.status == ObjectiveStatus.SETTLED:
-            settled_count += 1
 
     active_count = sum(status_counts.get(s.value, 0) for s in _ACTIVE_STATES)
     treasury_balance = _treasury_balance(session, workspace.id)
 
     obj_ids = [o.id for o in objectives]
     recent_events: list[GovernanceEvent] = []
+    settlements: list[Settlement] = []
     if obj_ids:
         recent_events = session.exec(
             select(GovernanceEvent)
@@ -93,16 +106,46 @@ def overview(
             .order_by(GovernanceEvent.created_at.desc())
             .limit(12)
         ).all()
+        settlements = session.exec(
+            select(Settlement).where(Settlement.objective_id.in_(obj_ids))
+        ).all()
+
+    # Realized settlement economics: net value released to counterparties, the
+    # governed fees Brewing retained, and value slashed back to treasuries.
+    settled_value = Decimal("0")
+    fees_collected = Decimal("0")
+    settled_count = 0
+    for st in settlements:
+        if st.status == SettlementStatus.SETTLED:
+            settled_count += 1
+            settled_value += _as_decimal(st.amount_usdc)
+            fees_collected += _as_decimal(st.fee_usdc)
 
     metrics = [
-        OverviewMetric(label="Active objectives", value=str(active_count)),
         OverviewMetric(
-            label="Escrow locked", value=f"{locked_total} USDC", hint="Across active objectives"
+            label="Active objectives",
+            value=str(active_count),
+            hint="In-flight coordination",
         ),
         OverviewMetric(
-            label="Treasury balance", value=f"{treasury_balance} USDC", hint="Live from settlement provider"
+            label="Escrow locked",
+            value=f"{locked_total} USDC",
+            hint="Across active objectives",
         ),
-        OverviewMetric(label="Settled", value=str(settled_count)),
+        OverviewMetric(
+            label="Treasury balance",
+            value=f"{treasury_balance} USDC",
+            hint="Live from settlement provider",
+        ),
+        OverviewMetric(
+            label="Value settled",
+            value=f"{settled_value} USDC",
+            hint=(
+                f"{settled_count} settled · {fees_collected} USDC fees"
+                if settled_count
+                else "Net released to counterparties"
+            ),
+        ),
     ]
 
     return OverviewOut(

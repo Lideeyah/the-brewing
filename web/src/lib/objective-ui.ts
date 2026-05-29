@@ -17,6 +17,39 @@ export const STATUS_META: Record<
   disputed: { label: "Disputed", tone: "failure" },
 };
 
+/**
+ * The canonical lifecycle, grouped into the six blueprint edges. Mission Control
+ * renders objective counts across these phases so the whole Intent -> Settlement
+ * loop is legible at a glance.
+ */
+export const LIFECYCLE_PHASES: {
+  key: string;
+  label: string;
+  statuses: ObjectiveStatus[];
+}[] = [
+  { key: "intent", label: "Intent", statuses: ["draft"] },
+  { key: "governance", label: "Governance", statuses: ["copilot_structured"] },
+  { key: "escrow", label: "Escrow", statuses: ["escrow_locked"] },
+  { key: "execution", label: "Execution", statuses: ["executing"] },
+  {
+    key: "validation",
+    label: "Validation",
+    statuses: ["under_audit", "governance_decision"],
+  },
+  {
+    key: "settlement",
+    label: "Settlement",
+    statuses: ["settled", "slashed", "disputed"],
+  },
+];
+
+export function phaseCount(
+  counts: Record<string, number>,
+  statuses: ObjectiveStatus[],
+): number {
+  return statuses.reduce((sum, s) => sum + (counts[s] ?? 0), 0);
+}
+
 export function eventTone(kind: string): Tone {
   if (kind.includes("settle") || kind.includes("approved")) return "success";
   if (kind.includes("dispute") || kind.includes("slash") || kind.includes("fail"))
