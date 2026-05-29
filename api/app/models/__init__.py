@@ -249,6 +249,84 @@ class GovernanceEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
+# --- Agent identity registry (ERC-8004-shaped) -----------------------------
+
+
+class AgentIdentity(SQLModel, table=True):
+    """A registered agent's on-chain-ready identity token.
+
+    Shaped to mirror an ERC-8004 Identity Registry entry: ``token_id`` is the
+    deterministic on-chain agent id, ``owner`` is the controlling account, and
+    ``metadata_uri`` points at a resolvable AgentCard (capabilities + service
+    endpoints). The fields are DB-backed today and can be mirrored to an EVM
+    registry without reshaping. Reputation history lives in ReputationEvent;
+    the denormalized counters here are a fast read cache.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    workspace_id: str = Field(foreign_key="workspace.id", index=True)
+    # Deterministic, unique on-chain-ready identity token id (ERC-8004 agentId).
+    token_id: str = Field(index=True, unique=True)
+    owner: str  # owner / agentic-wallet address holding signing authority
+    name: str
+    capabilities: list = Field(default_factory=list, sa_column=Column(JSON))
+    service_endpoints: list = Field(default_factory=list, sa_column=Column(JSON))
+
+    # Reputation read cache (authoritative history is ReputationEvent).
+    reputation_score: float = 0.0  # 0..100; jobs_total == 0 means "unrated"
+    jobs_completed: int = 0
+    jobs_failed: int = 0
+
+    # ERC-8004 mirroring pointers (null until mirrored on-chain).
+    metadata_uri: str | None = None  # AgentCard URI
+    registry_chain: str | None = None
+    registry_address: str | None = None
+
+    # Public verifier for blind-signature feedback. In production the private
+    # key lives in the agent's agentic wallet and signs client-side; the MVP
+    # stores a server-side signing secret (never exposed) to demonstrate the
+    # sign-before-reveal flow. `signing_pubkey` is the derived public id.
+    signing_secret: str | None = None
+    signing_pubkey: str | None = None
+
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class ReputationEvent(SQLModel, table=True):
+    """Append-only reputation history for an agent identity."""
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    agent_id: str = Field(foreign_key="agentidentity.id", index=True)
+    objective_id: str | None = Field(default=None, foreign_key="objective.id")
+    kind: str  # "job.completed" | "job.failed" | "feedback.revealed"
+    delta: float = 0.0  # contribution toward the score
+    score_after: float = 0.0
+    note: str | None = None
+    created_at: datetime = Field(default_factory=_now)
+
+
+class FeedbackCommitment(SQLModel, table=True):
+    """Blind-signature feedback commitment.
+
+    The agent signs a commitment *before* the evaluation outcome is revealed,
+    binding it to the feedback regardless of result. This prevents selective
+    participation in only positive reviews: the signature is captured at commit
+    time, so an agent cannot decline once it sees a negative outcome.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    agent_id: str = Field(foreign_key="agentidentity.id", index=True)
+    objective_id: str = Field(foreign_key="objective.id", index=True)
+    nonce: str
+    commitment_hash: str  # blinded hash bound at commit time (no outcome inside)
+    signature: str  # agent signature over commitment_hash, captured pre-reveal
+    revealed: bool = False
+    outcome: str | None = None  # "success" | "failure", set only at reveal
+    created_at: datetime = Field(default_factory=_now)
+    revealed_at: datetime | None = None
+
+
 class Settlement(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)

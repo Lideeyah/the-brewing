@@ -176,6 +176,77 @@ class ObjectiveDetailOut(ObjectiveOut):
     settlement: SettlementOut | None = None
 
 
+# --- Agent identity registry ------------------------------------------------
+
+
+class ServiceEndpoint(BaseModel):
+    name: str
+    url: str
+    protocol: str | None = None
+
+
+class AgentRegisterIn(BaseModel):
+    name: str
+    owner: str  # agentic-wallet address / controlling account
+    capabilities: list[str] = []
+    service_endpoints: list[ServiceEndpoint] = []
+    metadata_uri: str | None = None
+
+
+class ReputationEventOut(BaseModel):
+    id: str
+    objective_id: str | None = None
+    kind: str
+    delta: float
+    score_after: float
+    note: str | None = None
+    created_at: datetime
+
+
+class AgentIdentityOut(BaseModel):
+    id: str
+    token_id: str  # on-chain-ready identity token (ERC-8004 agentId)
+    owner: str
+    name: str
+    capabilities: list[str]
+    service_endpoints: list[dict]
+    reputation_score: float
+    jobs_completed: int
+    jobs_failed: int
+    rated: bool  # false until the agent has at least one outcome
+    metadata_uri: str | None = None
+    registry_chain: str | None = None
+    registry_address: str | None = None
+    signing_pubkey: str | None = None  # public verifier; the secret is never exposed
+    created_at: datetime
+
+
+class AgentDetailOut(AgentIdentityOut):
+    reputation_history: list[ReputationEventOut] = []
+
+
+class FeedbackCommitIn(BaseModel):
+    objective_id: str
+
+
+class FeedbackCommitmentOut(BaseModel):
+    id: str
+    agent_id: str
+    objective_id: str
+    commitment_hash: str
+    signature: str
+    revealed: bool
+    outcome: str | None = None
+    created_at: datetime
+    revealed_at: datetime | None = None
+
+
+class FeedbackRevealIn(BaseModel):
+    commitment_id: str
+    success: bool
+    note: str | None = None
+
+
 # --- Dashboard --------------------------------------------------------------
 
 
