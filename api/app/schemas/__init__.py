@@ -96,6 +96,46 @@ class EscrowOut(BaseModel):
     explorer_url: str | None = None
 
 
+class ExecutionStepOut(BaseModel):
+    id: str
+    index: int
+    title: str
+    status: str
+    output: str | None = None
+
+
+class ExecutionRunOut(BaseModel):
+    id: str
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    steps: list[ExecutionStepOut]
+
+
+class AuditReviewOut(BaseModel):
+    id: str
+    status: str
+    notes: str | None = None
+    created_at: datetime
+
+
+class SettlementOut(BaseModel):
+    id: str
+    status: str
+    amount_usdc: str
+    fee_usdc: str
+    payout_address: str | None = None
+    payout_tx_ref: str | None = None
+    explorer_url: str | None = None
+
+
+class AuditDecision(BaseModel):
+    """Governance validation decision applied to a completed execution."""
+
+    decision: str = "approve"  # "approve" | "reject"
+    notes: str | None = None
+
+
 class ObjectiveDetailOut(ObjectiveOut):
     governance_config: dict
     sla_config: dict
@@ -104,6 +144,9 @@ class ObjectiveDetailOut(ObjectiveOut):
     timeline: list[GovernanceEventOut]
     escrow: EscrowOut | None = None
     treasury_address: str | None = None
+    execution: ExecutionRunOut | None = None
+    audit: AuditReviewOut | None = None
+    settlement: SettlementOut | None = None
 
 
 # --- Dashboard --------------------------------------------------------------

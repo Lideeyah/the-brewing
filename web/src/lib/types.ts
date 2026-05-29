@@ -42,6 +42,39 @@ export interface Escrow {
   explorer_url?: string | null;
 }
 
+export interface ExecutionStep {
+  id: string;
+  index: number;
+  title: string;
+  status: string;
+  output?: string | null;
+}
+
+export interface ExecutionRun {
+  id: string;
+  status: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  steps: ExecutionStep[];
+}
+
+export interface AuditReview {
+  id: string;
+  status: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface Settlement {
+  id: string;
+  status: string;
+  amount_usdc: string;
+  fee_usdc: string;
+  payout_address?: string | null;
+  payout_tx_ref?: string | null;
+  explorer_url?: string | null;
+}
+
 export interface ObjectiveDetail extends Objective {
   governance_config: Record<string, unknown>;
   sla_config: Record<string, unknown>;
@@ -53,6 +86,9 @@ export interface ObjectiveDetail extends Objective {
   timeline: GovernanceEvent[];
   escrow?: Escrow | null;
   treasury_address?: string | null;
+  execution?: ExecutionRun | null;
+  audit?: AuditReview | null;
+  settlement?: Settlement | null;
 }
 
 export interface OverviewMetric {

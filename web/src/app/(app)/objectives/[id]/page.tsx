@@ -7,6 +7,7 @@ import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { StructureButton } from "@/components/app/structure-button";
 import { LockEscrowButton } from "@/components/app/lock-escrow-button";
+import { LifecycleActions } from "@/components/app/lifecycle-actions";
 import { ApiError, apiGet } from "@/lib/api";
 import type { ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -41,6 +42,10 @@ export default async function ObjectiveDetailPage({
   const isDraft = obj.status === "draft";
   const escrow = obj.escrow;
   const canLockEscrow = obj.status === "copilot_structured";
+  const execution = obj.execution;
+  const audit = obj.audit;
+  const settlement = obj.settlement;
+  const auditApproved = audit?.status === "approved";
 
   return (
     <>
@@ -73,7 +78,17 @@ export default async function ObjectiveDetailPage({
                 </p>
               )}
             </div>
-            {isDraft && <StructureButton objectiveId={obj.id} />}
+            <div className="shrink-0">
+              {isDraft ? (
+                <StructureButton objectiveId={obj.id} />
+              ) : (
+                <LifecycleActions
+                  objectiveId={obj.id}
+                  status={obj.status}
+                  auditApproved={auditApproved}
+                />
+              )}
+            </div>
           </div>
 
           {/* Intent + escrow */}
@@ -236,6 +251,128 @@ export default async function ObjectiveDetailPage({
                   </div>
                 </PanelBody>
               </Panel>
+            </div>
+          )}
+
+          {/* Execution orchestration */}
+          {execution && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="Execution orchestration"
+                meta={execution.status}
+              />
+              <PanelBody>
+                <ol className="space-y-3">
+                  {execution.steps.map((s) => (
+                    <li key={s.id} className="flex gap-2.5">
+                      <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-strong font-operational text-[10px] text-accent">
+                        {s.index + 1}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[13px] text-foreground">
+                            {s.title}
+                          </span>
+                          <StatusPill
+                            tone={s.status === "completed" ? "success" : "pending"}
+                          >
+                            {s.status}
+                          </StatusPill>
+                        </div>
+                        {s.output && (
+                          <p className="mt-0.5 text-[12px] text-muted">
+                            {s.output}
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              </PanelBody>
+            </Panel>
+          )}
+
+          {/* Validation + settlement outcome */}
+          {(audit || settlement) && (
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {audit && (
+                <Panel>
+                  <PanelHeader title="Governance validation" />
+                  <PanelBody className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                        Decision
+                      </p>
+                      <StatusPill
+                        tone={auditApproved ? "success" : "failure"}
+                      >
+                        {audit.status}
+                      </StatusPill>
+                    </div>
+                    {audit.notes && (
+                      <p className="text-[13px] leading-relaxed text-secondary">
+                        {audit.notes}
+                      </p>
+                    )}
+                  </PanelBody>
+                </Panel>
+              )}
+
+              {settlement && (
+                <Panel>
+                  <PanelHeader title="Settlement" />
+                  <PanelBody className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                        Outcome
+                      </p>
+                      <StatusPill
+                        tone={
+                          settlement.status === "settled" ? "success" : "failure"
+                        }
+                      >
+                        {settlement.status}
+                      </StatusPill>
+                    </div>
+                    <Field
+                      label={
+                        settlement.status === "settled"
+                          ? "Released to counterparty"
+                          : "Returned to treasury"
+                      }
+                      value={`${settlement.amount_usdc} USDC`}
+                      mono
+                    />
+                    <Field
+                      label="Governed fee (2.5%)"
+                      value={`${settlement.fee_usdc} USDC`}
+                      mono
+                    />
+                    {settlement.payout_address && (
+                      <div>
+                        <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                          Payout account
+                        </p>
+                        {settlement.explorer_url ? (
+                          <a
+                            href={settlement.explorer_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-0.5 inline-flex items-center gap-1 break-all font-operational text-[12px] text-accent hover:underline"
+                          >
+                            {settlement.payout_address}
+                            <ExternalLink size={11} className="shrink-0" />
+                          </a>
+                        ) : (
+                          <p className="mt-0.5 break-all font-operational text-[12px] text-foreground">
+                            {settlement.payout_address}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </PanelBody>
+                </Panel>
+              )}
             </div>
           )}
 
