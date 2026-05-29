@@ -103,6 +103,8 @@ class Workspace(SQLModel, table=True):
     org_name: str | None = None
     operational_type: str | None = None
     owner_id: str = Field(foreign_key="user.id", index=True)
+    # SaaS plan gating governance-dashboard access. Volume fees apply on top.
+    subscription_tier: str = "free"
     created_at: datetime = Field(default_factory=_now)
 
 
@@ -246,7 +248,8 @@ class Settlement(SQLModel, table=True):
     objective_id: str = Field(foreign_key="objective.id", index=True)
     status: SettlementStatus = SettlementStatus.PENDING
     amount_usdc: str = "0"
-    fee_usdc: str = "0"  # 2.5% governed settlement fee
+    fee_usdc: str = "0"  # hybrid volume fee (tiered, $0.001 micro-fee floor)
+    fee_basis: str | None = None  # which tier applied, e.g. "0.5% volume tier"
     payout_tx_ref: str | None = None
     payout_tx_hash: str | None = None  # resolved on-chain signature
     created_at: datetime = Field(default_factory=_now)

@@ -55,10 +55,9 @@ from app.schemas import (
     SettlementOut,
 )
 
-# Governed platform settlement fee (frozen product decision).
-SETTLEMENT_FEE_RATE = Decimal("0.025")
 # USDC has 6 decimal places on-chain.
 _USDC_QUANT = Decimal("0.000001")
+from app.domain.settlement.fees import quote_settlement_fee
 from app.services import workspace as workspace_service
 
 router = APIRouter(prefix="/objectives", tags=["objectives"])
@@ -547,10 +546,12 @@ def settle_objective(
 ) -> ObjectiveDetailOut:
     """Settlement.
 
-    On governance approval, release the escrow (net of the 2.5% governed fee) to
+    On governance approval, release the escrow (net of the hybrid volume fee) to
     a payout wallet representing the execution counterparty. On rejection, slash
     the escrow back to the workspace treasury. Both are real on-chain USDC
-    movements via the settlement provider.
+    movements via the settlement provider. The fee is resolved from the tiered
+    volume schedule (0.5% scaling down, $0.001 micro-fee floor), never a flat
+    rate.
     """
     obj = _get_owned_objective(session, workspace, objective_id)
 
@@ -598,7 +599,8 @@ def settle_objective(
     try:
         provider = get_settlement_provider()
         if approved:
-            fee = (amount * SETTLEMENT_FEE_RATE).quantize(_USDC_QUANT)
+            quote = quote_settlement_fee(amount)
+            fee = quote.fee_usdc
             net = (amount - fee).quantize(_USDC_QUANT)
             payout = provider.provision_treasury_wallet(f"payout-{obj.id}")
             release_ref = EscrowRef(
@@ -617,6 +619,7 @@ def settle_objective(
                     status=SettlementStatus.SETTLED,
                     amount_usdc=str(net),
                     fee_usdc=str(fee),
+                    fee_basis=quote.basis,
                     payout_tx_ref=transfer.tx_ref,
                 )
             )
@@ -625,11 +628,12 @@ def settle_objective(
                 session,
                 objective_id=obj.id,
                 kind="settlement.released",
-                message=f"Released {net} USDC to counterparty (fee {fee} USDC retained).",
+                message=f"Released {net} USDC to counterparty (fee {fee} USDC, {quote.basis}).",
                 actor=user.id,
                 data={
                     "net_usdc": str(net),
                     "fee_usdc": str(fee),
+                    "fee_basis": quote.basis,
                     "payout_address": payout.address,
                     "payout_tx_ref": transfer.tx_ref,
                 },
@@ -652,6 +656,7 @@ def settle_objective(
                     status=SettlementStatus.SLASHED,
                     amount_usdc=str(amount),
                     fee_usdc="0",
+                    fee_basis="slashed — no fee",
                     payout_tx_ref=transfer.tx_ref,
                 )
             )
@@ -802,6 +807,7 @@ def _settlement_out(
         status=settlement.status.value,
         amount_usdc=settlement.amount_usdc,
         fee_usdc=settlement.fee_usdc,
+        fee_basis=settlement.fee_basis,
         payout_address=payout_address,
         payout_tx_ref=settlement.payout_tx_ref,
         payout_tx_hash=settlement.payout_tx_hash,

@@ -455,7 +455,11 @@ export default async function ObjectiveDetailPage({
                       mono
                     />
                     <Field
-                      label="Governed fee (2.5%)"
+                      label={
+                        settlement.fee_basis
+                          ? `Governed fee (${settlement.fee_basis})`
+                          : "Governed fee"
+                      }
                       value={`${settlement.fee_usdc} USDC`}
                       mono
                     />

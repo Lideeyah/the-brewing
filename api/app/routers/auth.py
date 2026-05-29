@@ -44,6 +44,7 @@ def _workspace_out(workspace: Workspace, treasury: Treasury | None) -> Workspace
         name=workspace.name,
         org_name=workspace.org_name,
         operational_type=workspace.operational_type,
+        subscription_tier=workspace.subscription_tier,
         treasury_address=treasury.address if treasury else None,
         treasury_blockchain=treasury.blockchain if treasury else None,
     )

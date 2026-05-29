@@ -40,6 +40,7 @@ class WorkspaceOut(BaseModel):
     name: str
     org_name: str | None = None
     operational_type: str | None = None
+    subscription_tier: str = "free"
     treasury_address: str | None = None
     treasury_blockchain: str | None = None
 
@@ -144,6 +145,7 @@ class SettlementOut(BaseModel):
     status: str
     amount_usdc: str
     fee_usdc: str
+    fee_basis: str | None = None  # tier applied, e.g. "0.5% volume tier"
     payout_address: str | None = None
     payout_tx_ref: str | None = None
     payout_tx_hash: str | None = None  # on-chain signature once confirmed

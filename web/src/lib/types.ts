@@ -95,6 +95,7 @@ export interface Settlement {
   status: string;
   amount_usdc: string;
   fee_usdc: string;
+  fee_basis?: string | null;
   payout_address?: string | null;
   payout_tx_ref?: string | null;
   payout_tx_hash?: string | null;
