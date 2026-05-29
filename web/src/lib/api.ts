@@ -8,9 +8,20 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    public body?: unknown,
   ) {
     super(message);
   }
+}
+
+async function readError(res: Response, path: string): Promise<ApiError> {
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch {
+    body = undefined;
+  }
+  return new ApiError(res.status, `${path} → ${res.status}`, body);
 }
 
 async function authHeaders(): Promise<Record<string, string>> {
@@ -24,7 +35,7 @@ export async function apiGet<T>(path: string): Promise<T> {
     headers: await authHeaders(),
     cache: "no-store",
   });
-  if (!res.ok) throw new ApiError(res.status, `GET ${path} → ${res.status}`);
+  if (!res.ok) throw await readError(res, `GET ${path}`);
   return res.json() as Promise<T>;
 }
 
@@ -35,6 +46,6 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     body: body !== undefined ? JSON.stringify(body) : undefined,
     cache: "no-store",
   });
-  if (!res.ok) throw new ApiError(res.status, `POST ${path} → ${res.status}`);
+  if (!res.ok) throw await readError(res, `POST ${path}`);
   return res.json() as Promise<T>;
 }

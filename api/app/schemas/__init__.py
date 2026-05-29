@@ -86,12 +86,24 @@ class ObjectiveOut(BaseModel):
     updated_at: datetime
 
 
+class EscrowOut(BaseModel):
+    id: str
+    status: str
+    amount_usdc: str
+    address: str | None = None
+    provider_escrow_id: str | None = None
+    lock_tx_ref: str | None = None
+    explorer_url: str | None = None
+
+
 class ObjectiveDetailOut(ObjectiveOut):
     governance_config: dict
     sla_config: dict
     settlement_config: dict
     orchestration_plan: dict
     timeline: list[GovernanceEventOut]
+    escrow: EscrowOut | None = None
+    treasury_address: str | None = None
 
 
 # --- Dashboard --------------------------------------------------------------

@@ -9,6 +9,9 @@ the caller's own workspace.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
@@ -16,8 +19,20 @@ from app.auth import get_current_user
 from app.db import get_session
 from app.domain import copilot
 from app.domain.governance import log_event
-from app.models import GovernanceEvent, Objective, ObjectiveStatus, User, Workspace
+from app.domain.settlement import get_settlement_provider
+from app.domain.settlement.circle_provider import SettlementConfigError
+from app.domain.settlement.provider import WalletRef
+from app.models import (
+    EscrowState,
+    EscrowStatus,
+    GovernanceEvent,
+    Objective,
+    ObjectiveStatus,
+    User,
+    Workspace,
+)
 from app.schemas import (
+    EscrowOut,
     GovernanceEventOut,
     ObjectiveCreate,
     ObjectiveDetailOut,
@@ -150,8 +165,6 @@ async def structure_objective(
         obj.settlement_config.get("recommended_escrow_usdc", obj.escrow_amount_usdc)
     )
     obj.status = ObjectiveStatus.COPILOT_STRUCTURED
-    from datetime import datetime, timezone
-
     obj.updated_at = datetime.now(timezone.utc)
     session.add(obj)
 
@@ -168,12 +181,133 @@ async def structure_objective(
     return _detail(session, obj)
 
 
+@router.post("/{objective_id}/escrow/lock", response_model=ObjectiveDetailOut)
+def lock_objective_escrow(
+    objective_id: str,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    obj = _get_owned_objective(session, workspace, objective_id)
+
+    if obj.status != ObjectiveStatus.COPILOT_STRUCTURED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Objective must be structured by the Copilot before escrow can be locked.",
+        )
+    try:
+        amount = Decimal(obj.escrow_amount_usdc or "0")
+    except InvalidOperation:
+        amount = Decimal("0")
+    if amount <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Objective has no escrow amount to lock.",
+        )
+
+    treasury = workspace_service.get_treasury(session, workspace.id)
+    if not treasury or not treasury.provider_wallet_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Workspace treasury is not provisioned.",
+        )
+
+    treasury_ref = WalletRef(
+        provider_wallet_id=treasury.provider_wallet_id,
+        address=treasury.address or "",
+        blockchain=treasury.blockchain or "",
+    )
+
+    try:
+        provider = get_settlement_provider()
+        balance = provider.get_balance(treasury_ref)
+        if balance < amount:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "insufficient_treasury_balance",
+                    "required_usdc": str(amount),
+                    "balance_usdc": str(balance),
+                    "treasury_address": treasury.address,
+                    "message": (
+                        f"Treasury holds {balance} USDC but {amount} USDC is required. "
+                        "Fund the treasury with test USDC on Solana devnet via "
+                        "https://faucet.circle.com, then lock again."
+                    ),
+                },
+            )
+        escrow_ref = provider.lock_escrow(treasury_ref, amount, obj.id)
+    except SettlementConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        )
+
+    escrow = EscrowState(
+        objective_id=obj.id,
+        status=EscrowStatus.LOCKED,
+        amount_usdc=str(amount),
+        provider="circle",
+        provider_escrow_id=escrow_ref.provider_escrow_id,
+        address=escrow_ref.address,
+        lock_tx_ref=escrow_ref.lock_tx_ref,
+    )
+    session.add(escrow)
+
+    obj.status = ObjectiveStatus.ESCROW_LOCKED
+    obj.updated_at = datetime.now(timezone.utc)
+    session.add(obj)
+
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="escrow.locked",
+        message=f"Locked {amount} USDC from treasury into objective escrow.",
+        actor=user.id,
+        data={
+            "amount_usdc": str(amount),
+            "escrow_address": escrow_ref.address,
+            "lock_tx_ref": escrow_ref.lock_tx_ref,
+        },
+    )
+    session.commit()
+    session.refresh(obj)
+    return _detail(session, obj)
+
+
+def _escrow_out(escrow: EscrowState | None) -> EscrowOut | None:
+    if escrow is None:
+        return None
+    # lock_tx_ref is Circle's transaction id (the on-chain signature is only
+    # known after confirmation), so we link to the escrow *account* on the
+    # explorer rather than fabricate a transaction URL.
+    explorer = (
+        f"https://explorer.solana.com/address/{escrow.address}?cluster=devnet"
+        if escrow.address
+        else None
+    )
+    return EscrowOut(
+        id=escrow.id,
+        status=escrow.status.value,
+        amount_usdc=escrow.amount_usdc,
+        address=escrow.address,
+        provider_escrow_id=escrow.provider_escrow_id,
+        lock_tx_ref=escrow.lock_tx_ref,
+        explorer_url=explorer,
+    )
+
+
 def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
     events = session.exec(
         select(GovernanceEvent)
         .where(GovernanceEvent.objective_id == obj.id)
         .order_by(GovernanceEvent.created_at.asc())
     ).all()
+    escrow = session.exec(
+        select(EscrowState)
+        .where(EscrowState.objective_id == obj.id)
+        .order_by(EscrowState.created_at.desc())
+    ).first()
+    treasury = workspace_service.get_treasury(session, obj.workspace_id)
     base = _objective_out(obj)
     return ObjectiveDetailOut(
         **base.model_dump(),
@@ -182,4 +316,6 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         settlement_config=obj.settlement_config,
         orchestration_plan=obj.orchestration_plan,
         timeline=[_event_out(e) for e in events],
+        escrow=_escrow_out(escrow),
+        treasury_address=treasury.address if treasury else None,
     )

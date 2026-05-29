@@ -1,11 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { StructureButton } from "@/components/app/structure-button";
+import { LockEscrowButton } from "@/components/app/lock-escrow-button";
 import { ApiError, apiGet } from "@/lib/api";
 import type { ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -38,6 +39,8 @@ export default async function ObjectiveDetailPage({
   const settle = obj.settlement_config;
   const steps = obj.orchestration_plan?.steps ?? [];
   const isDraft = obj.status === "draft";
+  const escrow = obj.escrow;
+  const canLockEscrow = obj.status === "copilot_structured";
 
   return (
     <>
@@ -92,6 +95,58 @@ export default async function ObjectiveDetailPage({
                   value={asString(settle?.release_condition) ?? "—"}
                 />
                 <Field label="Currency" value={asString(settle?.currency) ?? "USDC"} />
+
+                {escrow && (
+                  <div className="space-y-3 border-t border-border pt-3">
+                    <div className="flex items-center justify-between">
+                      <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                        Escrow
+                      </p>
+                      <StatusPill tone="success">{escrow.status}</StatusPill>
+                    </div>
+                    <Field
+                      label="Locked"
+                      value={`${escrow.amount_usdc} USDC`}
+                      mono
+                    />
+                    {escrow.address && (
+                      <div>
+                        <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                          Escrow account
+                        </p>
+                        {escrow.explorer_url ? (
+                          <a
+                            href={escrow.explorer_url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-0.5 inline-flex items-center gap-1 break-all font-operational text-[12px] text-accent hover:underline"
+                          >
+                            {escrow.address}
+                            <ExternalLink size={11} className="shrink-0" />
+                          </a>
+                        ) : (
+                          <p className="mt-0.5 break-all font-operational text-[12px] text-foreground">
+                            {escrow.address}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {canLockEscrow && (
+                  <div className="border-t border-border pt-3">
+                    <LockEscrowButton
+                      objectiveId={obj.id}
+                      amountUsdc={obj.escrow_amount_usdc}
+                    />
+                    {obj.treasury_address && (
+                      <p className="mt-2 break-all font-operational text-[11px] text-muted">
+                        From treasury: {obj.treasury_address}
+                      </p>
+                    )}
+                  </div>
+                )}
               </PanelBody>
             </Panel>
           </div>

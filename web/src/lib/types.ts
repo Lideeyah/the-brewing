@@ -32,6 +32,16 @@ export interface GovernanceEvent {
   created_at: string;
 }
 
+export interface Escrow {
+  id: string;
+  status: string;
+  amount_usdc: string;
+  address?: string | null;
+  provider_escrow_id?: string | null;
+  lock_tx_ref?: string | null;
+  explorer_url?: string | null;
+}
+
 export interface ObjectiveDetail extends Objective {
   governance_config: Record<string, unknown>;
   sla_config: Record<string, unknown>;
@@ -41,6 +51,8 @@ export interface ObjectiveDetail extends Objective {
     unknown
   >;
   timeline: GovernanceEvent[];
+  escrow?: Escrow | null;
+  treasury_address?: string | null;
 }
 
 export interface OverviewMetric {
