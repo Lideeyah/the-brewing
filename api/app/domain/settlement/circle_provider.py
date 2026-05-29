@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from app.config import get_settings
 from app.domain.settlement.provider import (
+    CUSTODIAL,
     EscrowRef,
     SettlementProvider,
     TransferResult,
@@ -36,6 +37,10 @@ def _explorer_url(signature: str | None) -> str | None:
 
 class CircleSettlementProvider(SettlementProvider):
     name = "circle"
+    # Circle Developer-Controlled Wallets hold the keys to escrow funds, so this
+    # rail is custodial. The non-custodial (agentic-wallet-controlled) model is
+    # a follow-on migration against NonCustodialSettlementProvider.
+    custody_model = CUSTODIAL
 
     def __init__(self) -> None:
         self.settings = get_settings()

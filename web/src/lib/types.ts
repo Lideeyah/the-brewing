@@ -32,10 +32,14 @@ export interface GovernanceEvent {
   created_at: string;
 }
 
+export type CustodyModel = "custodial" | "non_custodial";
+
 export interface Escrow {
   id: string;
   status: string;
   amount_usdc: string;
+  custody_model: CustodyModel;
+  controller_wallet?: string | null;
   address?: string | null;
   provider_escrow_id?: string | null;
   lock_tx_ref?: string | null;

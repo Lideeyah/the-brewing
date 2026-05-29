@@ -3,6 +3,7 @@ import { ArrowUpRight, Sparkles } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
 import { LifecyclePipeline } from "@/components/app/lifecycle-pipeline";
+import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { apiGet } from "@/lib/api";
@@ -53,6 +54,8 @@ export default async function DashboardPage() {
             </Panel>
           ))}
         </div>
+
+        <NonCustodialNote className="mt-4" />
 
         {/* Lifecycle pipeline — the Intent -> Settlement loop at a glance */}
         {totalObjectives > 0 && (

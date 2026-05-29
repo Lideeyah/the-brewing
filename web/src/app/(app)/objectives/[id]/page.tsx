@@ -8,6 +8,7 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { StructureButton } from "@/components/app/structure-button";
 import { LockEscrowButton } from "@/components/app/lock-escrow-button";
 import { LifecycleActions } from "@/components/app/lifecycle-actions";
+import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { ApiError, apiGet } from "@/lib/api";
 import type { ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -166,6 +167,11 @@ export default async function ObjectiveDetailPage({
                     )}
                   </div>
                 )}
+
+                <NonCustodialNote
+                  custodyModel={escrow?.custody_model}
+                  controllerWallet={escrow?.controller_wallet}
+                />
 
                 {canLockEscrow && (
                   <div className="border-t border-border pt-3">
@@ -501,6 +507,10 @@ export default async function ObjectiveDetailPage({
                         </a>
                       </div>
                     )}
+                    <NonCustodialNote
+                      custodyModel={escrow?.custody_model}
+                      controllerWallet={escrow?.controller_wallet}
+                    />
                   </PanelBody>
                 </Panel>
               )}

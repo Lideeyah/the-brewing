@@ -166,6 +166,12 @@ class EscrowState(SQLModel, table=True):
     amount_usdc: str = "0"
 
     provider: str = "circle"
+    # Trust model for this escrow account: "custodial" (provider holds keys) or
+    # "non_custodial" (tenant agentic wallet holds keys; Brewing never custodies).
+    custody_model: str = "custodial"
+    # The tenant agentic wallet with signing authority in the non-custodial
+    # model. Null while the rail is custodial.
+    controller_wallet: str | None = None
     provider_escrow_id: str | None = None
     address: str | None = None
     lock_tx_ref: str | None = None

@@ -29,6 +29,8 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "escrowstate": {
         "lock_tx_hash": "VARCHAR",
         "settle_tx_hash": "VARCHAR",
+        "custody_model": "VARCHAR NOT NULL DEFAULT 'custodial'",
+        "controller_wallet": "VARCHAR",
     },
     "settlement": {
         "payout_tx_hash": "VARCHAR",

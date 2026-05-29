@@ -91,6 +91,8 @@ class EscrowOut(BaseModel):
     id: str
     status: str
     amount_usdc: str
+    custody_model: str = "custodial"  # "custodial" | "non_custodial"
+    controller_wallet: str | None = None  # agentic wallet holding signing authority
     address: str | None = None
     provider_escrow_id: str | None = None
     lock_tx_ref: str | None = None
