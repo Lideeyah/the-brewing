@@ -26,6 +26,13 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "recommendation": "VARCHAR",
         "overridden": "BOOLEAN NOT NULL DEFAULT 0",
     },
+    "escrowstate": {
+        "lock_tx_hash": "VARCHAR",
+        "settle_tx_hash": "VARCHAR",
+    },
+    "settlement": {
+        "payout_tx_hash": "VARCHAR",
+    },
 }
 
 

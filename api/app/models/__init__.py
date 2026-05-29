@@ -168,6 +168,10 @@ class EscrowState(SQLModel, table=True):
     address: str | None = None
     lock_tx_ref: str | None = None
     settle_tx_ref: str | None = None
+    # On-chain signatures, resolved from the provider once confirmed. These make
+    # the lock/release independently verifiable on a block explorer.
+    lock_tx_hash: str | None = None
+    settle_tx_hash: str | None = None
 
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
@@ -244,4 +248,5 @@ class Settlement(SQLModel, table=True):
     amount_usdc: str = "0"
     fee_usdc: str = "0"  # 2.5% governed settlement fee
     payout_tx_ref: str | None = None
+    payout_tx_hash: str | None = None  # resolved on-chain signature
     created_at: datetime = Field(default_factory=_now)

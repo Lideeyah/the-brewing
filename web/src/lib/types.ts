@@ -39,6 +39,8 @@ export interface Escrow {
   address?: string | null;
   provider_escrow_id?: string | null;
   lock_tx_ref?: string | null;
+  lock_tx_hash?: string | null;
+  lock_tx_url?: string | null;
   explorer_url?: string | null;
 }
 
@@ -95,6 +97,8 @@ export interface Settlement {
   fee_usdc: string;
   payout_address?: string | null;
   payout_tx_ref?: string | null;
+  payout_tx_hash?: string | null;
+  payout_tx_url?: string | null;
   explorer_url?: string | null;
 }
 

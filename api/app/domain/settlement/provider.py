@@ -41,6 +41,20 @@ class TransferResult:
     explorer_url: str | None = None
 
 
+@dataclass(frozen=True)
+class TxProof:
+    """Resolved on-chain proof for a previously submitted settlement transfer.
+
+    `tx_ref` is the provider's internal id; `tx_hash` is the on-chain signature
+    that makes the movement independently verifiable on a block explorer.
+    """
+
+    tx_ref: str
+    state: str
+    tx_hash: str | None = None
+    explorer_url: str | None = None
+
+
 class SettlementProvider(ABC):
     """Contract every settlement implementation must satisfy."""
 
@@ -67,3 +81,7 @@ class SettlementProvider(ABC):
     @abstractmethod
     def slash_escrow(self, escrow: EscrowRef, treasury: WalletRef) -> TransferResult:
         """Return/redirect escrowed funds when execution is invalidated."""
+
+    @abstractmethod
+    def get_transaction_proof(self, tx_ref: str) -> TxProof:
+        """Resolve a submitted transfer to its on-chain proof (signature + URL)."""

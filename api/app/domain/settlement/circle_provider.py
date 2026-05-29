@@ -16,6 +16,7 @@ from app.domain.settlement.provider import (
     EscrowRef,
     SettlementProvider,
     TransferResult,
+    TxProof,
     WalletRef,
 )
 
@@ -175,4 +176,26 @@ class CircleSettlementProvider(SettlementProvider):
             destination_address=treasury.address,
             amount=escrow.amount,
             ref_id=f"slash:{escrow.provider_escrow_id}",
+        )
+
+    def get_transaction_proof(self, tx_ref: str) -> TxProof:
+        """Resolve a Circle transaction id to its confirmed on-chain signature.
+
+        Circle returns the transaction immediately with an internal id; the
+        on-chain `txHash` only appears once the network confirms it. Once a
+        signature exists, we build a verifiable explorer /tx/ proof link.
+        """
+        client = self._client_or_raise()
+        dcw = self._dcw
+        api = dcw.TransactionsApi(client)
+        resp = api.get_transaction(tx_ref)
+        data = resp.data.transaction if hasattr(resp.data, "transaction") else resp.data
+        state = getattr(data, "state", "") or ""
+        state = getattr(state, "value", str(state))
+        tx_hash = getattr(data, "tx_hash", None)
+        return TxProof(
+            tx_ref=tx_ref,
+            state=state,
+            tx_hash=tx_hash,
+            explorer_url=_explorer_url(tx_hash),
         )

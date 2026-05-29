@@ -93,7 +93,9 @@ class EscrowOut(BaseModel):
     address: str | None = None
     provider_escrow_id: str | None = None
     lock_tx_ref: str | None = None
-    explorer_url: str | None = None
+    lock_tx_hash: str | None = None  # on-chain signature once confirmed
+    lock_tx_url: str | None = None  # explorer /tx/ proof link
+    explorer_url: str | None = None  # escrow account on the explorer
 
 
 class ExecutionStepOut(BaseModel):
@@ -144,7 +146,9 @@ class SettlementOut(BaseModel):
     fee_usdc: str
     payout_address: str | None = None
     payout_tx_ref: str | None = None
-    explorer_url: str | None = None
+    payout_tx_hash: str | None = None  # on-chain signature once confirmed
+    payout_tx_url: str | None = None  # explorer /tx/ proof link
+    explorer_url: str | None = None  # payout account on the explorer
 
 
 class AuditDecision(BaseModel):

@@ -680,12 +680,33 @@ def settle_objective(
     return _detail(session, obj)
 
 
+def _tx_explorer_url(tx_hash: str | None) -> str | None:
+    if not tx_hash:
+        return None
+    return f"https://explorer.solana.com/tx/{tx_hash}?cluster=devnet"
+
+
+def _resolve_tx_hash(tx_ref: str | None, existing: str | None) -> str | None:
+    """Best-effort resolve a provider tx id to its on-chain signature.
+
+    Cached once confirmed (the caller persists the result). Never raises — if
+    the provider is unreachable or the tx is still unconfirmed, returns None and
+    the UI falls back to account-level links.
+    """
+    if existing:
+        return existing
+    if not tx_ref:
+        return None
+    try:
+        proof = get_settlement_provider().get_transaction_proof(tx_ref)
+        return proof.tx_hash
+    except Exception:  # noqa: BLE001 — proof resolution is best-effort
+        return None
+
+
 def _escrow_out(escrow: EscrowState | None) -> EscrowOut | None:
     if escrow is None:
         return None
-    # lock_tx_ref is Circle's transaction id (the on-chain signature is only
-    # known after confirmation), so we link to the escrow *account* on the
-    # explorer rather than fabricate a transaction URL.
     explorer = (
         f"https://explorer.solana.com/address/{escrow.address}?cluster=devnet"
         if escrow.address
@@ -698,6 +719,8 @@ def _escrow_out(escrow: EscrowState | None) -> EscrowOut | None:
         address=escrow.address,
         provider_escrow_id=escrow.provider_escrow_id,
         lock_tx_ref=escrow.lock_tx_ref,
+        lock_tx_hash=escrow.lock_tx_hash,
+        lock_tx_url=_tx_explorer_url(escrow.lock_tx_hash),
         explorer_url=explorer,
     )
 
@@ -781,6 +804,8 @@ def _settlement_out(
         fee_usdc=settlement.fee_usdc,
         payout_address=payout_address,
         payout_tx_ref=settlement.payout_tx_ref,
+        payout_tx_hash=settlement.payout_tx_hash,
+        payout_tx_url=_tx_explorer_url(settlement.payout_tx_hash),
         explorer_url=explorer,
     )
 
@@ -828,6 +853,34 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         ),
         None,
     )
+
+    # Best-effort resolve provider tx ids to confirmed on-chain signatures so the
+    # lock/payout become independently verifiable. Persist once resolved so we
+    # only hit the provider until the transaction confirms.
+    _proof_dirty = False
+    if escrow and escrow.lock_tx_ref and not escrow.lock_tx_hash:
+        h = _resolve_tx_hash(escrow.lock_tx_ref, None)
+        if h:
+            escrow.lock_tx_hash = h
+            _proof_dirty = True
+    if escrow and escrow.settle_tx_ref and not escrow.settle_tx_hash:
+        h = _resolve_tx_hash(escrow.settle_tx_ref, None)
+        if h:
+            escrow.settle_tx_hash = h
+            _proof_dirty = True
+    if settlement and settlement.payout_tx_ref and not settlement.payout_tx_hash:
+        h = _resolve_tx_hash(settlement.payout_tx_ref, None)
+        if h:
+            settlement.payout_tx_hash = h
+            _proof_dirty = True
+    if _proof_dirty:
+        if escrow:
+            session.add(escrow)
+        if settlement:
+            session.add(settlement)
+        session.commit()
+        session.refresh(obj)
+
     treasury = workspace_service.get_treasury(session, obj.workspace_id)
     base = _objective_out(obj)
     return ObjectiveDetailOut(

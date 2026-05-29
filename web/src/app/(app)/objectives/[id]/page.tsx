@@ -148,6 +148,22 @@ export default async function ObjectiveDetailPage({
                         )}
                       </div>
                     )}
+                    {escrow.lock_tx_url && (
+                      <div>
+                        <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                          Lock proof
+                        </p>
+                        <a
+                          href={escrow.lock_tx_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-0.5 inline-flex items-center gap-1 break-all font-operational text-[12px] text-accent hover:underline"
+                        >
+                          {escrow.lock_tx_hash ?? "View transaction"}
+                          <ExternalLink size={11} className="shrink-0" />
+                        </a>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -463,6 +479,22 @@ export default async function ObjectiveDetailPage({
                             {settlement.payout_address}
                           </p>
                         )}
+                      </div>
+                    )}
+                    {settlement.payout_tx_url && (
+                      <div>
+                        <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                          Payout proof
+                        </p>
+                        <a
+                          href={settlement.payout_tx_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-0.5 inline-flex items-center gap-1 break-all font-operational text-[12px] text-accent hover:underline"
+                        >
+                          {settlement.payout_tx_hash ?? "View transaction"}
+                          <ExternalLink size={11} className="shrink-0" />
+                        </a>
                       </div>
                     )}
                   </PanelBody>

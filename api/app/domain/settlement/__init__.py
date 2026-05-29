@@ -7,6 +7,7 @@ from app.domain.settlement.provider import (
     EscrowRef,
     SettlementProvider,
     TransferResult,
+    TxProof,
     WalletRef,
 )
 
@@ -14,6 +15,7 @@ __all__ = [
     "EscrowRef",
     "SettlementProvider",
     "TransferResult",
+    "TxProof",
     "WalletRef",
     "get_settlement_provider",
 ]
