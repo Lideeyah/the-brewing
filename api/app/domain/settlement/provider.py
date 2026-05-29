@@ -29,6 +29,7 @@ class EscrowRef:
     provider_escrow_id: str
     address: str
     amount: Decimal
+    lock_tx_ref: str | None = None
 
 
 @dataclass(frozen=True)

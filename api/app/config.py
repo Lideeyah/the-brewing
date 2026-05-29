@@ -1,6 +1,33 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+# Credential fields that an empty-string environment variable must NOT shadow.
+# Some shells export e.g. ANTHROPIC_API_KEY="" which pydantic prioritizes over
+# the .env file; an explicitly-empty secret is never useful, so we backfill it
+# from the .env file when present.
+_BACKFILL_FIELDS = (
+    "anthropic_api_key",
+    "circle_api_key",
+    "circle_entity_secret",
+    "circle_wallet_set_id",
+)
+
+
+def _dotenv_values() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not _ENV_FILE.exists():
+        return values
+    for line in _ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, val = line.split("=", 1)
+        values[key.strip().lower()] = val.strip()
+    return values
 
 
 class Settings(BaseSettings):
@@ -44,4 +71,9 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    settings = Settings()
+    dotenv = _dotenv_values()
+    for field in _BACKFILL_FIELDS:
+        if not getattr(settings, field) and dotenv.get(field):
+            setattr(settings, field, dotenv[field])
+    return settings

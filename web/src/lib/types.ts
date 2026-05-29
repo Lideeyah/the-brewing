@@ -1,0 +1,58 @@
+// Wire contracts mirrored from the FastAPI schemas. Kept minimal and explicit.
+
+export type ObjectiveStatus =
+  | "draft"
+  | "copilot_structured"
+  | "escrow_locked"
+  | "executing"
+  | "under_audit"
+  | "governance_decision"
+  | "settled"
+  | "slashed"
+  | "disputed";
+
+export interface Objective {
+  id: string;
+  workspace_id: string;
+  title: string;
+  intent: string;
+  status: ObjectiveStatus;
+  summary?: string | null;
+  escrow_amount_usdc: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GovernanceEvent {
+  id: string;
+  kind: string;
+  message: string;
+  actor?: string | null;
+  data: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ObjectiveDetail extends Objective {
+  governance_config: Record<string, unknown>;
+  sla_config: Record<string, unknown>;
+  settlement_config: Record<string, unknown>;
+  orchestration_plan: { steps?: { title: string; detail?: string }[] } & Record<
+    string,
+    unknown
+  >;
+  timeline: GovernanceEvent[];
+}
+
+export interface OverviewMetric {
+  label: string;
+  value: string;
+  hint?: string | null;
+}
+
+export interface Overview {
+  metrics: OverviewMetric[];
+  status_counts: Record<string, number>;
+  treasury_balance_usdc: string;
+  objectives: Objective[];
+  recent_events: GovernanceEvent[];
+}

@@ -1,0 +1,261 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { ArrowLeft } from "lucide-react";
+
+import { Topbar } from "@/components/app/topbar";
+import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
+import { StatusPill } from "@/components/ui/status-pill";
+import { StructureButton } from "@/components/app/structure-button";
+import { ApiError, apiGet } from "@/lib/api";
+import type { ObjectiveDetail } from "@/lib/types";
+import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
+
+function asArray(v: unknown): string[] {
+  return Array.isArray(v) ? v.map((x) => String(x)) : [];
+}
+function asString(v: unknown): string | null {
+  return typeof v === "string" || typeof v === "number" ? String(v) : null;
+}
+
+export default async function ObjectiveDetailPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+
+  let obj: ObjectiveDetail;
+  try {
+    obj = await apiGet<ObjectiveDetail>(`/objectives/${id}`);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) notFound();
+    throw err;
+  }
+
+  const meta = STATUS_META[obj.status];
+  const gov = obj.governance_config;
+  const sla = obj.sla_config;
+  const settle = obj.settlement_config;
+  const steps = obj.orchestration_plan?.steps ?? [];
+  const isDraft = obj.status === "draft";
+
+  return (
+    <>
+      <Topbar title="Objective" breadcrumb={`brewing / objectives / ${objRef(obj.id)}`} />
+
+      <div className="flex-1 overflow-y-auto px-6 py-6">
+        <div className="mx-auto max-w-5xl">
+          <Link
+            href="/objectives"
+            className="mb-4 inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-foreground"
+          >
+            <ArrowLeft size={13} /> All objectives
+          </Link>
+
+          {/* Header */}
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3">
+                <span className="font-operational text-[12px] text-muted">
+                  {objRef(obj.id)}
+                </span>
+                <StatusPill tone={meta.tone}>{meta.label}</StatusPill>
+              </div>
+              <h2 className="mt-2 text-[20px] font-semibold tracking-tight text-foreground">
+                {obj.title}
+              </h2>
+              {obj.summary && (
+                <p className="mt-2 max-w-3xl text-[13px] leading-relaxed text-secondary">
+                  {obj.summary}
+                </p>
+              )}
+            </div>
+            {isDraft && <StructureButton objectiveId={obj.id} />}
+          </div>
+
+          {/* Intent + escrow */}
+          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <Panel className="lg:col-span-2">
+              <PanelHeader title="Operational intent" />
+              <PanelBody>
+                <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-secondary">
+                  {obj.intent}
+                </p>
+              </PanelBody>
+            </Panel>
+            <Panel>
+              <PanelHeader title="Settlement" />
+              <PanelBody className="space-y-3">
+                <Field label="Escrow budget" value={`${obj.escrow_amount_usdc} USDC`} mono />
+                <Field
+                  label="Release condition"
+                  value={asString(settle?.release_condition) ?? "—"}
+                />
+                <Field label="Currency" value={asString(settle?.currency) ?? "USDC"} />
+              </PanelBody>
+            </Panel>
+          </div>
+
+          {isDraft ? (
+            <Panel className="mt-4">
+              <PanelBody className="flex flex-col items-center gap-3 py-10 text-center">
+                <p className="text-[13px] text-foreground">
+                  This objective is a draft.
+                </p>
+                <p className="max-w-md text-[12px] text-muted">
+                  Run the Coordination Copilot to structure governance rules,
+                  SLA, settlement terms, and an execution-orchestration plan.
+                </p>
+                <div className="mt-1">
+                  <StructureButton objectiveId={obj.id} />
+                </div>
+              </PanelBody>
+            </Panel>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <Panel>
+                <PanelHeader title="Governance" />
+                <PanelBody className="space-y-3">
+                  <Field
+                    label="Approval policy"
+                    value={asString(gov?.approval_policy) ?? "—"}
+                  />
+                  <div>
+                    <p className="mb-1.5 font-operational text-[11px] uppercase tracking-wider text-muted">
+                      Validation criteria
+                    </p>
+                    <ul className="space-y-1.5">
+                      {asArray(gov?.validation_criteria).map((c, i) => (
+                        <li
+                          key={i}
+                          className="flex gap-2 text-[13px] text-secondary"
+                        >
+                          <span className="text-accent">·</span>
+                          {c}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <Field
+                    label="Dispute policy"
+                    value={asString(gov?.dispute_policy) ?? "—"}
+                  />
+                </PanelBody>
+              </Panel>
+
+              <Panel>
+                <PanelHeader title="SLA & Orchestration" />
+                <PanelBody className="space-y-3">
+                  <Field
+                    label="Deadline"
+                    value={
+                      asString(sla?.deadline_hours)
+                        ? `${asString(sla?.deadline_hours)}h`
+                        : "—"
+                    }
+                    mono
+                  />
+                  <div>
+                    <p className="mb-1.5 font-operational text-[11px] uppercase tracking-wider text-muted">
+                      Orchestration plan
+                    </p>
+                    <ol className="space-y-2">
+                      {steps.map((s, i) => (
+                        <li key={i} className="flex gap-2.5">
+                          <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-strong font-operational text-[10px] text-accent">
+                            {i + 1}
+                          </span>
+                          <div>
+                            <div className="text-[13px] text-foreground">
+                              {s.title}
+                            </div>
+                            {s.detail && (
+                              <div className="text-[12px] text-muted">
+                                {s.detail}
+                              </div>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ol>
+                  </div>
+                </PanelBody>
+              </Panel>
+            </div>
+          )}
+
+          {/* Governance timeline */}
+          <Panel className="mt-4">
+            <PanelHeader title="Governance timeline" meta="append-only" />
+            <PanelBody className="space-y-4">
+              {obj.timeline.map((e, i) => {
+                const tone = eventTone(e.kind);
+                return (
+                  <div key={e.id} className="flex gap-3">
+                    <div className="flex flex-col items-center">
+                      <span
+                        className={`mt-1 h-2 w-2 rounded-full ${
+                          tone === "success"
+                            ? "bg-success"
+                            : tone === "failure"
+                              ? "bg-failure"
+                              : tone === "active"
+                                ? "bg-accent"
+                                : "bg-muted"
+                        }`}
+                      />
+                      {i < obj.timeline.length - 1 && (
+                        <span className="mt-1 w-px flex-1 bg-border" />
+                      )}
+                    </div>
+                    <div className="pb-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-operational text-[10px] text-muted">
+                          {formatTime(e.created_at)}
+                        </span>
+                        <span className="font-operational text-[10px] text-accent">
+                          {e.kind}
+                        </span>
+                        {e.actor && (
+                          <span className="font-operational text-[10px] text-muted">
+                            · {e.actor}
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-[12px] leading-snug text-secondary">
+                        {e.message}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </PanelBody>
+          </Panel>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Field({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div>
+      <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+        {label}
+      </p>
+      <p
+        className={`mt-0.5 text-[13px] text-foreground ${mono ? "font-operational" : ""}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
