@@ -20,6 +20,7 @@ import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { AssignAgent } from "@/components/app/assign-agent";
 import { WorkflowPanel } from "@/components/app/workflow-panel";
 import { ProvenanceChain } from "@/components/app/provenance-chain";
+import { SettlementRationale } from "@/components/app/settlement-rationale";
 import { ApiError, apiGet } from "@/lib/api";
 import type { AgentIdentity, ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -503,6 +504,14 @@ export default async function ObjectiveDetailPage({
                 </p>
               </PanelBody>
             </Panel>
+          )}
+
+          {/* Settlement rationale — "why did this agent get paid?" */}
+          {obj.authorization && (
+            <SettlementRationale
+              authorization={obj.authorization}
+              settlement={settlement}
+            />
           )}
 
           {/* AI governance evaluation (advisory) */}

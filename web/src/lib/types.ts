@@ -149,6 +149,41 @@ export interface ValidationRecord {
   validator?: Validator | null;
 }
 
+export interface CriterionBasis {
+  step_index?: number | null;
+  step_title?: string | null;
+  output_kind?: string | null;
+  quality?: string | null;
+  matched_terms: string[];
+}
+
+export interface CriterionResult {
+  key: string;
+  description: string;
+  required_evidence_kind?: string | null;
+  satisfied?: boolean | null; // true | false | null (indeterminate)
+  confidence: number;
+  rationale: string;
+  basis: CriterionBasis[];
+}
+
+export interface SettlementAuthorization {
+  id: string;
+  objective_id: string;
+  evidence_hash: string;
+  criteria_results: CriterionResult[];
+  criteria_total: number;
+  criteria_satisfied: number;
+  criteria_failed: number;
+  criteria_indeterminate: number;
+  evidence_verdict: Recommendation;
+  headline: string;
+  governance_approved?: boolean | null;
+  aligned_with_evidence?: boolean | null;
+  authorized?: boolean | null;
+  created_at: string;
+}
+
 export interface AssignedAgent {
   id: string;
   token_id: string;
@@ -212,6 +247,7 @@ export interface ObjectiveDetail extends Objective {
   evaluation?: GovernanceEvaluation | null;
   validation?: ValidationRecord | null;
   audit?: AuditReview | null;
+  authorization?: SettlementAuthorization | null;
   settlement?: Settlement | null;
   assigned_agent?: AssignedAgent | null;
   workflow: WorkflowRole[];
