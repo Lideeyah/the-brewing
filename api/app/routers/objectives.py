@@ -61,6 +61,7 @@ from app.schemas import (
     ObjectiveDetailOut,
     ObjectiveOut,
     SettlementOut,
+    UpdateAllocationIn,
     ValidationFinding,
     ValidationRecordOut,
     ValidatorOut,
@@ -288,6 +289,71 @@ def assign_role(
             "agent_id": agent.id,
             "token_id": agent.token_id,
             "allocation_usdc": role.allocation_usdc,
+        },
+    )
+    session.commit()
+    session.refresh(obj)
+    return _detail(session, obj)
+
+
+@router.patch(
+    "/{objective_id}/roles/{role_id}/allocation", response_model=ObjectiveDetailOut
+)
+def update_role_allocation(
+    objective_id: str,
+    role_id: str,
+    body: UpdateAllocationIn,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    """Re-weight a role's settlement allocation.
+
+    The Copilot proposes a budget-proportional split at structure time; this is
+    the user-adjust path. The change is rejected if it pushes total allocations
+    over budget, and recorded in the append-only allocation history. Locked once
+    the objective has settled so a paid-out split can't be rewritten.
+    """
+    obj = _get_owned_objective(session, workspace, objective_id)
+    if obj.status in (ObjectiveStatus.SETTLED, ObjectiveStatus.SLASHED):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Allocations are locked once the objective has settled.",
+        )
+    role = session.get(WorkflowRole, role_id)
+    if role is None or role.objective_id != obj.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Role not found"
+        )
+    try:
+        new_amount = Decimal(body.allocation_usdc)
+    except InvalidOperation:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Allocation must be a USDC decimal amount.",
+        )
+    try:
+        previous = role.allocation_usdc
+        workflow_domain.update_allocation(
+            session, objective=obj, role=role, new_amount=new_amount, actor=user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="role.reallocated",
+        message=(
+            f"Re-weighted the {role.title} role allocation "
+            f"from {previous} to {role.allocation_usdc} USDC."
+        ),
+        actor=user.id,
+        data={
+            "role_id": role.id,
+            "role_key": role.role_key,
+            "from_usdc": previous,
+            "to_usdc": role.allocation_usdc,
         },
     )
     session.commit()
@@ -1286,6 +1352,7 @@ def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
         assigned_agent=assigned_agent,
         allocation_usdc=role.allocation_usdc,
         status=role.status.value if hasattr(role.status, "value") else str(role.status),
+        outcome=role.outcome,
     )
 
 

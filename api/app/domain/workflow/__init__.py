@@ -17,13 +17,24 @@ Provider-agnostic and dependency-free. All amounts are USDC decimals as strings.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 from sqlmodel import Session, select
 
-from app.models import AgentIdentity, Objective, WorkflowRole
+from app.models import (
+    AgentIdentity,
+    Objective,
+    RoleAllocationChange,
+    RoleStatus,
+    WorkflowRole,
+)
 
 _USDC = Decimal("0.000001")
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # Ordered role catalog. role_key -> (default title, description, default weight).
@@ -303,3 +314,85 @@ def get_roles(session: Session, objective_id: str) -> list[WorkflowRole]:
         .where(WorkflowRole.objective_id == objective_id)
         .order_by(WorkflowRole.order_index.asc())
     ).all()
+
+
+def update_allocation(
+    session: Session,
+    *,
+    objective: Objective,
+    role: WorkflowRole,
+    new_amount: Decimal,
+    actor: str | None = None,
+) -> WorkflowRole:
+    """Re-weight a single role's settlement allocation.
+
+    The Copilot proposes the initial budget-proportional split; this is the
+    user-adjust path. Refuses a negative amount or one that would push the sum
+    of all role allocations over the objective budget, and records the change
+    in the append-only allocation history.
+
+    Raises ValueError on an invalid edit.
+    """
+
+    if new_amount < 0:
+        raise ValueError("Allocation cannot be negative.")
+
+    budget = _dec(objective.escrow_amount_usdc)
+    others = sum(
+        (
+            _dec(r.allocation_usdc)
+            for r in get_roles(session, objective.id)
+            if r.id != role.id
+        ),
+        Decimal("0"),
+    )
+    new_amount = new_amount.quantize(_USDC)
+    if budget > 0 and (others + new_amount) > budget:
+        remaining = (budget - others).quantize(_USDC)
+        raise ValueError(
+            f"Allocation {new_amount} USDC exceeds the remaining budget of "
+            f"{remaining} USDC (objective budget {_q(budget)} USDC)."
+        )
+
+    previous = role.allocation_usdc
+    role.allocation_usdc = _q(new_amount)
+    role.updated_at = _now()
+    session.add(role)
+    session.add(
+        RoleAllocationChange(
+            objective_id=objective.id,
+            role_id=role.id,
+            from_usdc=previous,
+            to_usdc=role.allocation_usdc,
+            actor=actor,
+        )
+    )
+    session.flush()
+    return role
+
+
+def settle_roles(
+    session: Session, *, objective_id: str, approved: bool
+) -> list[WorkflowRole]:
+    """Resolve every workflow role's outcome when an objective settles.
+
+    On approval, each role's allocation is treated as released to its assigned
+    agent; on rejection, each role is slashed. Roles with no assigned agent are
+    still marked so the workflow reflects a complete, auditable outcome. Returns
+    the roles whose outcome was set.
+    """
+
+    roles = get_roles(session, objective_id)
+    resolved: list[WorkflowRole] = []
+    for role in roles:
+        if approved:
+            role.outcome = "released"
+            role.status = RoleStatus.COMPLETED
+        else:
+            role.outcome = "slashed"
+            role.status = RoleStatus.FAILED
+        role.updated_at = _now()
+        session.add(role)
+        resolved.append(role)
+    session.flush()
+    return resolved

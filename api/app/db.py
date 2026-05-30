@@ -52,6 +52,9 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "workspace": {
         "subscription_tier": "VARCHAR NOT NULL DEFAULT 'free'",
     },
+    "workflowrole": {
+        "outcome": "VARCHAR",
+    },
 }
 
 

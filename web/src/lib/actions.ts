@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { ApiError, apiGet, apiPost } from "@/lib/api";
+import { ApiError, apiGet, apiPatch, apiPost } from "@/lib/api";
 import type {
   AgentIdentity,
   ObjectiveDetail,
@@ -177,6 +177,28 @@ export async function assignRole(
         }
       }
     }
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/**
+ * Workflow: re-weight a role's settlement allocation. The Copilot proposes the
+ * initial split; this lets a user adjust it before settlement. The API refuses
+ * an edit that pushes total allocations over budget.
+ */
+export async function updateRoleAllocation(
+  objectiveId: string,
+  roleId: string,
+  allocationUsdc: string,
+): Promise<LifecycleResult> {
+  try {
+    await apiPatch<ObjectiveDetail>(
+      `/objectives/${objectiveId}/roles/${roleId}/allocation`,
+      { allocation_usdc: allocationUsdc },
+    );
+    revalidatePath(`/objectives/${objectiveId}`);
+    return { ok: true };
+  } catch (err) {
     return { ok: false, message: apiErrorMessage(err) };
   }
 }

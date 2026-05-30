@@ -228,6 +228,7 @@ class WorkflowRoleOut(BaseModel):
     assigned_agent: "AssignedAgentOut | None" = None
     allocation_usdc: str = "0"
     status: str = "pending"
+    outcome: str | None = None  # released | slashed, set at settlement
 
 
 class FeasibilityRoleCheck(BaseModel):
@@ -256,6 +257,10 @@ class FeasibilityReport(BaseModel):
 
 class AssignRoleIn(BaseModel):
     agent_id: str  # AgentIdentity.id to bind to this role
+
+
+class UpdateAllocationIn(BaseModel):
+    allocation_usdc: str  # new role-level settlement allocation (USDC decimal)
 
 
 class ObjectiveDetailOut(ObjectiveOut):

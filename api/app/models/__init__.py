@@ -195,9 +195,29 @@ class WorkflowRole(SQLModel, table=True):
     allocation_usdc: str = "0"
 
     status: RoleStatus = Field(default=RoleStatus.PENDING, index=True)
+    # Role-level settlement outcome, set when a settled objective is split
+    # role-by-role: "released" (paid to the assigned agent) or "slashed".
+    outcome: str | None = None
 
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+
+class RoleAllocationChange(SQLModel, table=True):
+    """Append-only history of a role's settlement-allocation edits.
+
+    The Copilot proposes the initial budget-proportional split; users may
+    re-weight roles before settlement. Every change is recorded so the
+    allocation that ultimately settles is fully auditable.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    objective_id: str = Field(foreign_key="objective.id", index=True)
+    role_id: str = Field(foreign_key="workflowrole.id", index=True)
+    from_usdc: str = "0"
+    to_usdc: str = "0"
+    actor: str | None = None
+    created_at: datetime = Field(default_factory=_now)
 
 
 class EscrowState(SQLModel, table=True):

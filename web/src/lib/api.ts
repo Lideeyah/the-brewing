@@ -49,3 +49,14 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   if (!res.ok) throw await readError(res, `POST ${path}`);
   return res.json() as Promise<T>;
 }
+
+export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    method: "PATCH",
+    headers: { ...(await authHeaders()), "Content-Type": "application/json" },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    cache: "no-store",
+  });
+  if (!res.ok) throw await readError(res, `PATCH ${path}`);
+  return res.json() as Promise<T>;
+}

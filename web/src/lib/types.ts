@@ -172,6 +172,7 @@ export interface WorkflowRole {
   assigned_agent?: AssignedAgent | null;
   allocation_usdc: string;
   status: RoleStatus;
+  outcome?: string | null;
 }
 
 export interface FeasibilityRoleCheck {
