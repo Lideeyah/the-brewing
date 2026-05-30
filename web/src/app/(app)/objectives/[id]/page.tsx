@@ -19,6 +19,7 @@ import { LifecycleActions } from "@/components/app/lifecycle-actions";
 import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { AssignAgent } from "@/components/app/assign-agent";
 import { WorkflowPanel } from "@/components/app/workflow-panel";
+import { ProvenanceChain } from "@/components/app/provenance-chain";
 import { ApiError, apiGet } from "@/lib/api";
 import type { AgentIdentity, ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -703,6 +704,30 @@ export default async function ObjectiveDetailPage({
                 </Panel>
               )}
             </div>
+          )}
+
+          {/* On-chain traceability — capital custody chain */}
+          {!isDraft && (escrow || settlement) && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="On-chain traceability"
+                meta="treasury → escrow → validation → settlement"
+              />
+              <PanelBody>
+                <ProvenanceChain
+                  treasuryAddress={obj.treasury_address}
+                  escrow={escrow}
+                  validation={validation}
+                  settlement={settlement}
+                />
+                <p className="mt-4 border-t border-border pt-3 text-[11px] text-muted">
+                  Every hop that has settled on-chain carries a verifiable
+                  proof — a transaction hash, an evidence hash, or an explorer
+                  link — so the path from locked capital to final disbursement
+                  is auditable end to end.
+                </p>
+              </PanelBody>
+            </Panel>
           )}
 
           {/* Governance timeline */}
