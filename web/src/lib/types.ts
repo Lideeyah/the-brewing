@@ -107,6 +107,17 @@ export interface Settlement {
   explorer_url?: string | null;
 }
 
+export interface AssignedAgent {
+  id: string;
+  token_id: string;
+  name: string;
+  reputation_score: number;
+  jobs_completed: number;
+  jobs_failed: number;
+  rated: boolean;
+  success_rate?: number | null;
+}
+
 export interface ObjectiveDetail extends Objective {
   governance_config: Record<string, unknown>;
   sla_config: Record<string, unknown>;
@@ -122,6 +133,69 @@ export interface ObjectiveDetail extends Objective {
   evaluation?: GovernanceEvaluation | null;
   audit?: AuditReview | null;
   settlement?: Settlement | null;
+  assigned_agent?: AssignedAgent | null;
+}
+
+export interface ServiceEndpoint {
+  name: string;
+  url: string;
+  protocol?: string | null;
+}
+
+export interface ReputationEvent {
+  id: string;
+  objective_id?: string | null;
+  kind: string;
+  delta: number;
+  score_after: number;
+  note?: string | null;
+  created_at: string;
+}
+
+export interface AgentIdentity {
+  id: string;
+  token_id: string;
+  owner: string;
+  name: string;
+  description?: string | null;
+  capabilities: string[];
+  service_endpoints: ServiceEndpoint[];
+  pricing?: string | null;
+  discoverable: boolean;
+  reputation_score: number;
+  jobs_completed: number;
+  jobs_failed: number;
+  rated: boolean;
+  success_rate?: number | null;
+  metadata_uri?: string | null;
+  registry_chain?: string | null;
+  registry_address?: string | null;
+  signing_pubkey?: string | null;
+  created_at: string;
+}
+
+export interface AgentDetail extends AgentIdentity {
+  reputation_history: ReputationEvent[];
+}
+
+export interface TrustScore {
+  token_id: string;
+  name: string;
+  owner: string;
+  description?: string | null;
+  pricing?: string | null;
+  reputation_score: number;
+  jobs_completed: number;
+  jobs_failed: number;
+  total_jobs: number;
+  success_rate?: number | null;
+  rated: boolean;
+  capabilities: string[];
+  service_endpoints: ServiceEndpoint[];
+  registry_chain?: string | null;
+  registry_address?: string | null;
+  last_outcome_at?: string | null;
+  recent_events: ReputationEvent[];
 }
 
 export interface OverviewMetric {

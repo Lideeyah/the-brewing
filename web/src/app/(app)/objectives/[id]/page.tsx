@@ -9,8 +9,9 @@ import { StructureButton } from "@/components/app/structure-button";
 import { LockEscrowButton } from "@/components/app/lock-escrow-button";
 import { LifecycleActions } from "@/components/app/lifecycle-actions";
 import { NonCustodialNote } from "@/components/app/non-custodial-note";
+import { AssignAgent } from "@/components/app/assign-agent";
 import { ApiError, apiGet } from "@/lib/api";
-import type { ObjectiveDetail } from "@/lib/types";
+import type { AgentIdentity, ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
 
 function asArray(v: unknown): string[] {
@@ -35,6 +36,13 @@ export default async function ObjectiveDetailPage({
     throw err;
   }
 
+  let agents: AgentIdentity[] = [];
+  try {
+    agents = await apiGet<AgentIdentity[]>("/agents");
+  } catch {
+    agents = [];
+  }
+
   const meta = STATUS_META[obj.status];
   const gov = obj.governance_config;
   const sla = obj.sla_config;
@@ -48,6 +56,8 @@ export default async function ObjectiveDetailPage({
   const audit = obj.audit;
   const settlement = obj.settlement;
   const auditApproved = audit?.status === "approved";
+  const assignedAgent = obj.assigned_agent;
+  const settled = obj.status === "settled" || obj.status === "slashed";
 
   return (
     <>
@@ -189,6 +199,70 @@ export default async function ObjectiveDetailPage({
               </PanelBody>
             </Panel>
           </div>
+
+          {/* Executor agent + live reputation */}
+          {!isDraft && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="Executor agent"
+                meta="reputation feedback loop"
+              />
+              <PanelBody className="space-y-3">
+                {assignedAgent ? (
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-[14px] font-medium text-foreground">
+                          {assignedAgent.name}
+                        </span>
+                        {assignedAgent.rated ? (
+                          <StatusPill tone="success">rated</StatusPill>
+                        ) : (
+                          <StatusPill tone="neutral">unrated</StatusPill>
+                        )}
+                      </div>
+                      <p className="mt-1 break-all font-operational text-[11px] text-muted">
+                        {assignedAgent.token_id}
+                      </p>
+                      <p className="mt-2 text-[12px] text-muted">
+                        {settled
+                          ? "Settlement outcome was folded into this agent's reputation automatically."
+                          : "On settlement, the outcome updates this agent's trust score automatically."}
+                      </p>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <div className="font-operational text-[24px] leading-none text-foreground">
+                        {assignedAgent.rated
+                          ? assignedAgent.reputation_score.toFixed(1)
+                          : "—"}
+                      </div>
+                      <div className="mt-1 text-[10px] uppercase tracking-wider text-muted">
+                        trust score
+                      </div>
+                      <div className="mt-2 font-operational text-[11px] text-muted">
+                        {assignedAgent.jobs_completed}✓ · {assignedAgent.jobs_failed}✗
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-[12px] text-muted">
+                    Assign a registered agent as this objective&apos;s executor.
+                    Its reputation will move with the settlement outcome.
+                  </p>
+                )}
+
+                {!settled && (
+                  <div className="border-t border-border pt-3">
+                    <AssignAgent
+                      objectiveId={obj.id}
+                      agents={agents}
+                      assignedId={assignedAgent?.id ?? null}
+                    />
+                  </div>
+                )}
+              </PanelBody>
+            </Panel>
+          )}
 
           {isDraft ? (
             <Panel className="mt-4">

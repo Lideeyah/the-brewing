@@ -3,8 +3,12 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 
-import { ApiError, apiPost } from "@/lib/api";
-import type { ObjectiveDetail } from "@/lib/types";
+import { ApiError, apiGet, apiPost } from "@/lib/api";
+import type {
+  AgentIdentity,
+  ObjectiveDetail,
+  TrustScore,
+} from "@/lib/types";
 
 /** Coordinate: capture raw intent and draft an objective, then open it. */
 export async function createObjective(formData: FormData) {
@@ -113,6 +117,100 @@ export async function settleObjective(
     revalidatePath("/dashboard");
     return { ok: true };
   } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/**
+ * Registry: assign a registered agent as an objective's executor. Once assigned,
+ * settlement automatically folds the outcome back into the agent's reputation.
+ */
+export async function assignAgent(
+  objectiveId: string,
+  agentId: string,
+): Promise<LifecycleResult> {
+  try {
+    await apiPost<ObjectiveDetail>(`/objectives/${objectiveId}/assign-agent`, {
+      agent_id: agentId,
+    });
+    revalidatePath(`/objectives/${objectiveId}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/** Result shape for agent self-registration. */
+export type RegisterAgentResult =
+  | { ok: true; agent: AgentIdentity }
+  | { ok: false; message: string };
+
+/**
+ * Registry: agent self-registration. A developer lists their agent on Brewing
+ * by minting an on-chain-ready identity token. Once registered it appears in the
+ * Agents marketplace as discoverable and hireable.
+ */
+export async function registerAgent(
+  formData: FormData,
+): Promise<RegisterAgentResult> {
+  const name = (formData.get("name") as string | null)?.trim();
+  const owner = (formData.get("owner") as string | null)?.trim();
+  if (!name || !owner) {
+    return { ok: false, message: "Agent name and wallet address are required." };
+  }
+
+  const description =
+    (formData.get("description") as string | null)?.trim() || undefined;
+  const pricing = (formData.get("pricing") as string | null)?.trim() || undefined;
+  const endpointUrl = (formData.get("endpoint_url") as string | null)?.trim();
+  const capabilities = ((formData.get("capabilities") as string | null) ?? "")
+    .split(",")
+    .map((c) => c.trim())
+    .filter(Boolean);
+
+  const service_endpoints = endpointUrl
+    ? [
+        {
+          name: "primary",
+          url: endpointUrl,
+          protocol: endpointUrl.startsWith("http") ? "https" : undefined,
+        },
+      ]
+    : [];
+
+  try {
+    const agent = await apiPost<AgentIdentity>("/agents", {
+      name,
+      owner,
+      description,
+      capabilities,
+      service_endpoints,
+      pricing,
+      discoverable: true,
+    });
+    revalidatePath("/agents");
+    return { ok: true, agent };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/** Result shape for a Trust API lookup. */
+export type TrustLookupResult =
+  | { ok: true; trust: TrustScore }
+  | { ok: false; message: string };
+
+/** Trust API: query reputation for any registered agent by its identity token. */
+export async function lookupTrust(tokenId: string): Promise<TrustLookupResult> {
+  const id = tokenId.trim();
+  if (!id) return { ok: false, message: "Enter an agent identity token." };
+  try {
+    const trust = await apiGet<TrustScore>(`/trust/${encodeURIComponent(id)}`);
+    return { ok: true, trust };
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      return { ok: false, message: "No registered agent for that token." };
+    }
     return { ok: false, message: apiErrorMessage(err) };
   }
 }
