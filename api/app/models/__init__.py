@@ -299,10 +299,17 @@ class GovernanceEvaluation(SQLModel, table=True):
 
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
+    # When set, the evaluation is scoped to a single coordination sub-task rather
+    # than the whole objective, so the Copilot reasons over a sub-task's own
+    # success criteria. Null means it is the objective-level evaluation.
+    role_id: str | None = Field(default=None, foreign_key="workflowrole.id", index=True)
     recommendation: str  # "approved" | "approved_with_conditions" | "rejected"
     reasoning: str = ""
     findings: list = Field(default_factory=list, sa_column=Column(JSON))
     conditions: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Advisory risk analysis: governance/financial/evidence risks the Copilot
+    # surfaces even when it recommends approval. Each: {category, severity, detail}.
+    risks: list = Field(default_factory=list, sa_column=Column(JSON))
     source: str = "copilot"  # model id or "heuristic"
     created_at: datetime = Field(default_factory=_now)
 

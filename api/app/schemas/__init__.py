@@ -124,11 +124,26 @@ class GovernanceFinding(BaseModel):
     assessment: str | None = None
 
 
+class GovernanceRisk(BaseModel):
+    """An advisory risk the Copilot flags during governance evaluation.
+
+    Risks are surfaced even on an "approved" recommendation — they are
+    governance intelligence, not a veto. ``category`` and ``severity`` are
+    constrained vocabularies the client maps to tone.
+    """
+
+    category: str  # evidence | financial | governance | execution | compliance
+    severity: str  # low | medium | high
+    detail: str
+
+
 class GovernanceEvaluationOut(BaseModel):
     id: str
+    role_id: str | None = None  # set when the evaluation scopes a sub-task
     recommendation: str  # approved | approved_with_conditions | rejected
     reasoning: str
     findings: list[GovernanceFinding]
+    risks: list[GovernanceRisk] = []
     conditions: list[str]
     source: str
     created_at: datetime
@@ -248,6 +263,101 @@ class SettlementOut(BaseModel):
     explorer_url: str | None = None  # payout account on the explorer
 
 
+class EvidenceTrailItem(BaseModel):
+    """One normalized execution output, annotated with what it grounds.
+
+    Ties a single piece of evidence forward to the success criteria it supports
+    (via the authorization's per-criterion basis) and flags whether the
+    independent validator surfaced an error on it — so the chain from raw output
+    to settlement is legible per step.
+    """
+
+    step_index: int
+    step_title: str
+    status: str
+    output_kind: str
+    quality: str
+    has_errors: bool = False
+    snippet: str = ""
+    supports_criteria: list[str] = []  # criterion descriptions grounded here
+    validation_flagged: bool = False  # validator surfaced a finding on this step
+
+
+class EvidenceTrailStage(BaseModel):
+    """One link in the output→evidence→validation→authorization→settlement chain."""
+
+    key: str  # output | evidence | validation | authorization | settlement
+    label: str
+    complete: bool
+    detail: str = ""
+
+
+class EvidenceTrailOut(BaseModel):
+    """Human-readable audit trail binding execution evidence to settlement.
+
+    The ``evidence_hash`` is the cryptographic anchor the independent validator
+    bound and the settlement authorization re-derived; ``hash_consistent``
+    asserts those two hashes match — i.e. the agent was authorized against the
+    exact evidence that was validated.
+    """
+
+    evidence_hash: str | None = None
+    hash_consistent: bool = False
+    items: list[EvidenceTrailItem] = []
+    stages: list[EvidenceTrailStage] = []
+    criteria_total: int = 0
+    criteria_satisfied: int = 0
+
+
+class WalletMovement(BaseModel):
+    """One on-chain movement of capital within an objective's lifecycle.
+
+    Each lock, release, or slash is a real USDC transfer between named wallets.
+    ``tx_hash`` + ``tx_url`` expose the independently verifiable proof; until the
+    provider confirms a signature the movement is shown as ``confirmed=False`` so
+    a not-yet-final hop is visible rather than hidden.
+    """
+
+    kind: str  # lock | release | slash
+    label: str
+    amount_usdc: str
+    direction: str  # inbound | outbound (relative to escrow custody)
+    from_label: str | None = None
+    from_address: str | None = None
+    to_label: str | None = None
+    to_address: str | None = None
+    to_explorer_url: str | None = None
+    tx_hash: str | None = None
+    tx_url: str | None = None
+    tx_ref: str | None = None
+    confirmed: bool = False
+    role_id: str | None = None  # set for per-sub-task movements
+    role_title: str | None = None
+    occurred_at: datetime
+
+
+class OnChainLedger(BaseModel):
+    """The full on-chain money trail for an objective.
+
+    Aggregates the escrow lock and every settlement (objective-level and
+    per-sub-task) into a single ordered movement ledger with explorer links and
+    running totals, so capital movement is legible in one place.
+    """
+
+    blockchain: str | None = None
+    treasury_address: str | None = None
+    treasury_explorer_url: str | None = None
+    escrow_address: str | None = None
+    escrow_explorer_url: str | None = None
+    movements: list[WalletMovement] = []
+    total_locked_usdc: str = "0"
+    total_released_usdc: str = "0"
+    total_slashed_usdc: str = "0"
+    total_fees_usdc: str = "0"
+    confirmed_count: int = 0
+    pending_count: int = 0
+
+
 class AuditDecision(BaseModel):
     """Governance validation decision applied to a completed execution."""
 
@@ -288,6 +398,8 @@ class WorkflowRoleOut(BaseModel):
     # The per-sub-task "why was this paid?" artifact + settlement, when resolved.
     authorization: "SettlementAuthorizationOut | None" = None
     settlement: "SettlementOut | None" = None
+    # Advisory Copilot evaluation scoped to this sub-task's own criteria.
+    evaluation: "GovernanceEvaluationOut | None" = None
 
 
 class CoordinationNodeOut(BaseModel):
@@ -378,6 +490,8 @@ class ObjectiveDetailOut(ObjectiveOut):
     workflow: list["WorkflowRoleOut"] = []
     coordination: "CoordinationGraphOut | None" = None
     feasibility: "FeasibilityReport | None" = None
+    evidence_trail: "EvidenceTrailOut | None" = None
+    onchain_ledger: "OnChainLedger | None" = None
 
 
 # --- Agent identity registry ------------------------------------------------

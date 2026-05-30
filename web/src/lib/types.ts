@@ -70,6 +70,21 @@ export interface GovernanceFinding {
   assessment?: string | null;
 }
 
+export type RiskCategory =
+  | "evidence"
+  | "financial"
+  | "governance"
+  | "execution"
+  | "compliance";
+
+export type RiskSeverity = "low" | "medium" | "high";
+
+export interface GovernanceRisk {
+  category: RiskCategory | string;
+  severity: RiskSeverity | string;
+  detail: string;
+}
+
 export type Recommendation =
   | "approved"
   | "approved_with_conditions"
@@ -77,9 +92,11 @@ export type Recommendation =
 
 export interface GovernanceEvaluation {
   id: string;
+  role_id?: string | null;
   recommendation: Recommendation;
   reasoning: string;
   findings: GovernanceFinding[];
+  risks: GovernanceRisk[];
   conditions: string[];
   source: string;
   created_at: string;
@@ -221,6 +238,8 @@ export interface WorkflowRole {
   settlement_status: SubTaskSettlementStatus;
   authorization?: SettlementAuthorization | null;
   settlement?: Settlement | null;
+  // Advisory Copilot evaluation scoped to this sub-task's own criteria.
+  evaluation?: GovernanceEvaluation | null;
 }
 
 // ready: deps satisfied, not yet validated. blocked: a dep still pending.
@@ -282,6 +301,68 @@ export interface FeasibilityReport {
   recommendations: string[];
 }
 
+export interface EvidenceTrailItem {
+  step_index: number;
+  step_title: string;
+  status: string;
+  output_kind: string;
+  quality: string;
+  has_errors: boolean;
+  snippet: string;
+  supports_criteria: string[];
+  validation_flagged: boolean;
+}
+
+export interface EvidenceTrailStage {
+  key: string; // output | evidence | validation | authorization | settlement
+  label: string;
+  complete: boolean;
+  detail: string;
+}
+
+export interface EvidenceTrail {
+  evidence_hash?: string | null;
+  hash_consistent: boolean;
+  items: EvidenceTrailItem[];
+  stages: EvidenceTrailStage[];
+  criteria_total: number;
+  criteria_satisfied: number;
+}
+
+export interface WalletMovement {
+  kind: string; // lock | release | slash
+  label: string;
+  amount_usdc: string;
+  direction: string; // inbound | outbound
+  from_label?: string | null;
+  from_address?: string | null;
+  to_label?: string | null;
+  to_address?: string | null;
+  to_explorer_url?: string | null;
+  tx_hash?: string | null;
+  tx_url?: string | null;
+  tx_ref?: string | null;
+  confirmed: boolean;
+  role_id?: string | null;
+  role_title?: string | null;
+  occurred_at: string;
+}
+
+export interface OnChainLedger {
+  blockchain?: string | null;
+  treasury_address?: string | null;
+  treasury_explorer_url?: string | null;
+  escrow_address?: string | null;
+  escrow_explorer_url?: string | null;
+  movements: WalletMovement[];
+  total_locked_usdc: string;
+  total_released_usdc: string;
+  total_slashed_usdc: string;
+  total_fees_usdc: string;
+  confirmed_count: number;
+  pending_count: number;
+}
+
 export interface ObjectiveDetail extends Objective {
   governance_config: Record<string, unknown>;
   sla_config: Record<string, unknown>;
@@ -303,6 +384,8 @@ export interface ObjectiveDetail extends Objective {
   workflow: WorkflowRole[];
   coordination?: CoordinationGraph | null;
   feasibility?: FeasibilityReport | null;
+  evidence_trail?: EvidenceTrail | null;
+  onchain_ledger?: OnChainLedger | null;
 }
 
 export interface ServiceEndpoint {

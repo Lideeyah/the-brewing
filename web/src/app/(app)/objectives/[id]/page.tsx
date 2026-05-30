@@ -22,6 +22,9 @@ import { WorkflowPanel } from "@/components/app/workflow-panel";
 import { CoordinationPanel } from "@/components/app/coordination-panel";
 import { ProvenanceChain } from "@/components/app/provenance-chain";
 import { SettlementRationale } from "@/components/app/settlement-rationale";
+import { GovernanceRisks } from "@/components/app/governance-risks";
+import { EvidenceTrail } from "@/components/app/evidence-trail";
+import { OnChainLedger } from "@/components/app/onchain-ledger";
 import { ApiError, apiGet } from "@/lib/api";
 import type { AgentIdentity, ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -523,6 +526,11 @@ export default async function ObjectiveDetailPage({
             />
           )}
 
+          {/* Evidence audit trail — output → evidence → validation → settlement */}
+          {obj.evidence_trail && (
+            <EvidenceTrail trail={obj.evidence_trail} />
+          )}
+
           {/* AI governance evaluation (advisory) */}
           {evaluation && (
             <Panel className="mt-4">
@@ -577,6 +585,10 @@ export default async function ObjectiveDetailPage({
                     ))}
                   </ul>
                 </div>
+
+                {evaluation.risks && evaluation.risks.length > 0 && (
+                  <GovernanceRisks risks={evaluation.risks} />
+                )}
 
                 {evaluation.conditions.length > 0 && (
                   <div>
@@ -746,6 +758,11 @@ export default async function ObjectiveDetailPage({
                 </p>
               </PanelBody>
             </Panel>
+          )}
+
+          {/* On-chain movement ledger — every USDC transfer + proof */}
+          {!isDraft && obj.onchain_ledger && (
+            <OnChainLedger ledger={obj.onchain_ledger} />
           )}
 
           {/* Governance timeline */}

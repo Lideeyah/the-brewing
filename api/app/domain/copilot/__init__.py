@@ -85,6 +85,11 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
   "findings": [
      {"criterion": the criterion text, "met": true|false, "assessment": one sentence}
   ],
+  "risks": [
+     {"category": "evidence"|"financial"|"governance"|"execution"|"compliance",
+      "severity": "low"|"medium"|"high",
+      "detail": one sentence naming a concrete risk in releasing settlement}
+  ],  // surface material risks even when recommending approval; [] only if none
   "conditions": [short remediation strings]  // required follow-ups; non-empty ONLY
                                               // when recommendation is approved_with_conditions
 }
@@ -92,9 +97,69 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
 Judge strictly against the provided validation criteria and execution outputs.
 Be specific, conservative, and concise. If an output is missing or insufficient
 to verify a criterion, mark it not met and say why. Use "approved_with_conditions"
-when the objective is substantially met but non-blocking follow-ups remain."""
+when the objective is substantially met but non-blocking follow-ups remain. The
+"risks" array is advisory governance intelligence: it must flag anything a human
+reviewer should weigh before releasing funds (thin or contradictory evidence,
+over-budget exposure, unverifiable claims, missing independent confirmation),
+even on an "approved" recommendation. Be honest about residual risk."""
 
 _VALID_RECOMMENDATIONS = {"approved", "approved_with_conditions", "rejected"}
+
+
+def _derive_risks(
+    steps: list[dict], evidence_summary: dict | None, recommendation: str
+) -> list[dict]:
+    """Deterministic risk findings used when the model is unavailable.
+
+    Mirrors the advisory ``risks`` array the model produces: concrete,
+    severity-tagged risks a reviewer should weigh before releasing settlement.
+    Derived from evidence quality so it stays honest even on an approval.
+    """
+
+    risks: list[dict] = []
+    completed = all(s.get("status") == "completed" for s in steps) if steps else False
+    if not completed:
+        risks.append(
+            {
+                "category": "execution",
+                "severity": "high",
+                "detail": "Execution did not complete; settling would pay for unfinished work.",
+            }
+        )
+    if evidence_summary is not None:
+        if evidence_summary.get("any_errors"):
+            risks.append(
+                {
+                    "category": "evidence",
+                    "severity": "high",
+                    "detail": "Normalized evidence contains error markers that contradict success.",
+                }
+            )
+        if not evidence_summary.get("all_strong") and completed:
+            risks.append(
+                {
+                    "category": "evidence",
+                    "severity": "medium",
+                    "detail": "Evidence quality is uneven; some criteria rest on weak or thin signals.",
+                }
+            )
+        if evidence_summary.get("unstructured_present"):
+            risks.append(
+                {
+                    "category": "evidence",
+                    "severity": "low",
+                    "detail": "Outcome rests on unstructured transcripts that are harder to verify independently.",
+                }
+            )
+    if recommendation == "rejected" and not risks:
+        risks.append(
+            {
+                "category": "governance",
+                "severity": "high",
+                "detail": "Validation criteria are not satisfied by the recorded evidence.",
+            }
+        )
+    return risks
 
 
 def _heuristic_evaluation(
@@ -151,6 +216,7 @@ def _heuristic_evaluation(
             "recommendation": rec,
             "reasoning": reasoning,
             "findings": findings,
+            "risks": _derive_risks(steps, evidence_summary, rec),
             "conditions": conditions,
             "_source": "heuristic",
         }
@@ -167,8 +233,9 @@ def _heuristic_evaluation(
         }
         for c in (criteria or ["Deliverable matches the stated intent"])
     ]
+    rec = "approved" if completed else "rejected"
     return {
-        "recommendation": "approved" if completed else "rejected",
+        "recommendation": rec,
         "reasoning": (
             "All orchestration steps completed and produced recorded outputs; "
             "no criteria violations were detected by automated review."
@@ -177,6 +244,7 @@ def _heuristic_evaluation(
             "criteria cannot be confirmed."
         ),
         "findings": findings,
+        "risks": _derive_risks(steps, evidence_summary, rec),
         "conditions": [],
         "_source": "heuristic",
     }
@@ -195,8 +263,41 @@ def _normalize_evaluation(data: dict) -> dict:
     )
     if rec != "approved_with_conditions":
         data["conditions"] = []
+    data["risks"] = _normalize_risks(data.get("risks"))
     data["reasoning"] = str(data.get("reasoning", "")).strip()
     return data
+
+
+_VALID_SEVERITIES = {"low", "medium", "high"}
+_VALID_RISK_CATEGORIES = {
+    "evidence",
+    "financial",
+    "governance",
+    "execution",
+    "compliance",
+}
+
+
+def _normalize_risks(raw: object) -> list[dict]:
+    """Coerce model-produced risks into {category, severity, detail} records."""
+
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        detail = str(item.get("detail") or item.get("risk") or "").strip()
+        if not detail:
+            continue
+        severity = str(item.get("severity", "")).strip().lower()
+        if severity not in _VALID_SEVERITIES:
+            severity = "medium"
+        category = str(item.get("category", "")).strip().lower()
+        if category not in _VALID_RISK_CATEGORIES:
+            category = "governance"
+        out.append({"category": category, "severity": severity, "detail": detail})
+    return out
 
 
 async def evaluate_governance(

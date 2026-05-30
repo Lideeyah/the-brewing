@@ -13,11 +13,13 @@ import {
   Loader2,
   Lock,
   ShieldCheck,
+  Sparkles,
   XCircle,
 } from "lucide-react";
 
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
+import { GovernanceRisks } from "@/components/app/governance-risks";
 import { settleSubtask, validateSubtask } from "@/lib/actions";
 import type {
   CoordinationGraph,
@@ -42,6 +44,16 @@ const DEP_STATE_META: Record<string, { tone: Tone; label: string }> = {
   blocked: { tone: "pending", label: "blocked" },
   blocked_failed: { tone: "failure", label: "dependency failed" },
   cycle: { tone: "failure", label: "dependency cycle" },
+};
+const REC_TONE: Record<string, Tone> = {
+  approved: "success",
+  approved_with_conditions: "pending",
+  rejected: "failure",
+};
+const REC_LABEL: Record<string, string> = {
+  approved: "approved",
+  approved_with_conditions: "approved · conditions",
+  rejected: "rejected",
 };
 
 function criterionText(c: string | Record<string, unknown>): string {
@@ -321,6 +333,49 @@ function SubTaskCard({
         <p className="mt-2 break-all font-operational text-[10px] text-muted">
           bound to {auth.evidence_hash}
         </p>
+      )}
+
+      {/* Advisory Copilot reasoning scoped to this sub-task */}
+      {role.evaluation && (
+        <div className="mt-3 space-y-2 rounded-lg border border-border bg-elevated/50 p-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Sparkles size={12} className="text-accent" />
+            <span className="font-operational text-[10px] uppercase tracking-wider text-muted">
+              Copilot review
+            </span>
+            <StatusPill
+              tone={REC_TONE[role.evaluation.recommendation] ?? "neutral"}
+              dot={false}
+            >
+              {REC_LABEL[role.evaluation.recommendation] ??
+                role.evaluation.recommendation}
+            </StatusPill>
+            <span className="font-operational text-[10px] text-muted">
+              advisory
+            </span>
+          </div>
+          {role.evaluation.reasoning && (
+            <p className="text-[12px] leading-relaxed text-secondary">
+              {role.evaluation.reasoning}
+            </p>
+          )}
+          {role.evaluation.risks && role.evaluation.risks.length > 0 && (
+            <GovernanceRisks risks={role.evaluation.risks} compact />
+          )}
+          {role.evaluation.conditions.length > 0 && (
+            <ul className="space-y-1">
+              {role.evaluation.conditions.map((c, i) => (
+                <li
+                  key={i}
+                  className="flex gap-1.5 text-[11px] leading-relaxed text-secondary"
+                >
+                  <span className="text-pending">·</span>
+                  {c}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {/* Actions */}

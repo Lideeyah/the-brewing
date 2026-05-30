@@ -68,6 +68,10 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "settlementauthorization": {
         "role_id": "VARCHAR",
     },
+    "governanceevaluation": {
+        "role_id": "VARCHAR",
+        "risks": "JSON NOT NULL DEFAULT '[]'",
+    },
 }
 
 

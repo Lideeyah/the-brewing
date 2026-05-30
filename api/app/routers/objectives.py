@@ -55,19 +55,25 @@ from app.schemas import (
     CriterionBasisOut,
     CriterionResultOut,
     EscrowOut,
+    EvidenceTrailItem,
+    EvidenceTrailOut,
+    EvidenceTrailStage,
     ExecutionRunOut,
     ExecutionStepOut,
     GovernanceEvaluationOut,
     GovernanceEventOut,
     GovernanceFinding,
+    GovernanceRisk,
     AssignRoleIn,
     FeasibilityReport,
     FeasibilityRoleCheck,
     ObjectiveCreate,
     ObjectiveDetailOut,
     ObjectiveOut,
+    OnChainLedger,
     SettlementAuthorizationOut,
     SettlementOut,
+    WalletMovement,
     UpdateAllocationIn,
     ValidationFinding,
     ValidationRecordOut,
@@ -589,22 +595,33 @@ def execute_objective(
 
 
 def _latest_evaluation(
-    session: Session, objective_id: str
+    session: Session, objective_id: str, role_id: str | None = None
 ) -> GovernanceEvaluation | None:
+    """Latest Copilot evaluation for an objective, or a specific sub-task.
+
+    With ``role_id`` omitted this returns the objective-level evaluation
+    (``role_id IS NULL``); passing a role id returns the advisory evaluation
+    scoped to that coordination sub-task.
+    """
+
+    stmt = select(GovernanceEvaluation).where(
+        GovernanceEvaluation.objective_id == objective_id
+    )
+    if role_id is None:
+        stmt = stmt.where(GovernanceEvaluation.role_id.is_(None))
+    else:
+        stmt = stmt.where(GovernanceEvaluation.role_id == role_id)
     return session.exec(
-        select(GovernanceEvaluation)
-        .where(GovernanceEvaluation.objective_id == objective_id)
-        .order_by(GovernanceEvaluation.created_at.desc())
+        stmt.order_by(GovernanceEvaluation.created_at.desc())
     ).first()
 
 
-def _objective_evidence(session: Session, obj: Objective) -> list[dict]:
-    """Rebuild the normalized evidence dicts for an objective from its steps.
+def _objective_step_dicts(session: Session, obj: Objective) -> list[dict]:
+    """Normalized step dicts for an objective's latest execution run.
 
-    Deterministic: the same step inputs yield the same evidence and therefore
-    the same ``evidence_hash`` the independent validator bound at evaluation
-    time. This lets the settlement authorization re-derive criterion
-    satisfaction from the exact evidence that was validated.
+    The single source of step truth the evidence builders and the advisory
+    Copilot evaluation all share, so every consumer reasons over the exact same
+    deterministic inputs (and therefore the same ``evidence_hash``).
     """
 
     run = session.exec(
@@ -621,7 +638,7 @@ def _objective_evidence(session: Session, obj: Objective) -> list[dict]:
         if run
         else []
     )
-    step_dicts = [
+    return [
         {
             "index": s.index,
             "title": s.title,
@@ -630,6 +647,18 @@ def _objective_evidence(session: Session, obj: Objective) -> list[dict]:
         }
         for s in steps
     ]
+
+
+def _objective_evidence(session: Session, obj: Objective) -> list[dict]:
+    """Rebuild the normalized evidence dicts for an objective from its steps.
+
+    Deterministic: the same step inputs yield the same evidence and therefore
+    the same ``evidence_hash`` the independent validator bound at evaluation
+    time. This lets the settlement authorization re-derive criterion
+    satisfaction from the exact evidence that was validated.
+    """
+
+    step_dicts = _objective_step_dicts(session, obj)
     return [e.to_dict() for e in oracle.build_evidence(step_dicts)]
 
 
@@ -644,29 +673,7 @@ def _objective_evidence_bundle(
     against this shared evidence, not the evidence itself.
     """
 
-    run = session.exec(
-        select(ExecutionRun)
-        .where(ExecutionRun.objective_id == obj.id)
-        .order_by(ExecutionRun.created_at.desc())
-    ).first()
-    steps = (
-        session.exec(
-            select(ExecutionStep)
-            .where(ExecutionStep.run_id == run.id)
-            .order_by(ExecutionStep.index.asc())
-        ).all()
-        if run
-        else []
-    )
-    step_dicts = [
-        {
-            "index": s.index,
-            "title": s.title,
-            "status": s.status.value,
-            "output": s.output,
-        }
-        for s in steps
-    ]
+    step_dicts = _objective_step_dicts(session, obj)
     evidence_objs = oracle.build_evidence(step_dicts)
     return (
         [e.to_dict() for e in evidence_objs],
@@ -688,7 +695,7 @@ def _get_owned_role(
 @router.post(
     "/{objective_id}/roles/{role_id}/validate", response_model=ObjectiveDetailOut
 )
-def validate_subtask(
+async def validate_subtask(
     objective_id: str,
     role_id: str,
     user: User = Depends(get_current_user),
@@ -782,6 +789,54 @@ def validate_subtask(
     role.validation_status = "passed" if passed else "failed"
     role.updated_at = datetime.now(timezone.utc)
     session.add(role)
+
+    # Advisory Copilot reasoning scoped to THIS sub-task's own success criteria.
+    # Mirrors the objective-level evaluation but bound to role_id, so the
+    # coordination graph carries per-sub-task findings, risks, and conditions.
+    # Strictly advisory and strictly non-blocking — the deterministic validation
+    # above already set the authoritative sub-task verdict.
+    try:
+        sub_steps = _objective_step_dicts(session, obj)
+        sub_evidence = oracle.build_evidence(sub_steps)
+        sub_eval = await copilot.evaluate_governance(
+            intent=obj.intent,
+            summary=role.description or role.title,
+            criteria=list(role.success_criteria or []),
+            steps=sub_steps,
+            evidence_block=oracle.render_evidence_block(sub_evidence),
+            evidence_summary=evidence_summary,
+        )
+        session.add(
+            GovernanceEvaluation(
+                objective_id=obj.id,
+                role_id=role.id,
+                recommendation=sub_eval["recommendation"],
+                reasoning=sub_eval.get("reasoning", ""),
+                findings=sub_eval.get("findings", []),
+                risks=sub_eval.get("risks", []),
+                conditions=sub_eval.get("conditions", []),
+                source=sub_eval.get("_source", "copilot"),
+            )
+        )
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="subtask.evaluated",
+            message=(
+                f"Coordination Copilot reviewed sub-task '{role.title}' against its "
+                f"own success criteria and recommends '{sub_eval['recommendation']}'."
+            ),
+            actor="copilot",
+            data={
+                "role_id": role.id,
+                "role_key": role.role_key,
+                "recommendation": sub_eval["recommendation"],
+                "source": sub_eval.get("_source", "copilot"),
+                "risk_count": len(sub_eval.get("risks", []) or []),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — advisory eval must never block validation
+        logger.warning("Sub-task Copilot evaluation skipped: %s", exc)
 
     validator = session.get(Validator, record.validator_id)
     log_event(
@@ -1072,6 +1127,7 @@ async def evaluate_governance_route(
         recommendation=result["recommendation"],
         reasoning=result.get("reasoning", ""),
         findings=result.get("findings", []),
+        risks=result.get("risks", []),
         conditions=result.get("conditions", []),
         source=result.get("_source", "copilot"),
     )
@@ -1091,6 +1147,7 @@ async def evaluate_governance_route(
             "recommendation": evaluation.recommendation,
             "source": evaluation.source,
             "criteria_count": len(criteria),
+            "risk_count": len(evaluation.risks or []),
             "evidence_kinds": evidence_summary.get("kinds", {}),
             "evidence_qualities": evidence_summary.get("qualities", {}),
             "unstructured_present": evidence_summary.get("unstructured_present", False),
@@ -1689,11 +1746,23 @@ def _evaluation_out(
                     assessment=f.get("assessment"),
                 )
             )
+    risks = []
+    for r in evaluation.risks or []:
+        if isinstance(r, dict):
+            risks.append(
+                GovernanceRisk(
+                    category=str(r.get("category", "governance")),
+                    severity=str(r.get("severity", "low")),
+                    detail=str(r.get("detail", "")),
+                )
+            )
     return GovernanceEvaluationOut(
         id=evaluation.id,
+        role_id=evaluation.role_id,
         recommendation=evaluation.recommendation,
         reasoning=evaluation.reasoning,
         findings=findings,
+        risks=risks,
         conditions=[str(c) for c in (evaluation.conditions or [])],
         source=evaluation.source,
         created_at=evaluation.created_at,
@@ -1843,6 +1912,315 @@ def _settlement_out(
     )
 
 
+def _evidence_trail(
+    session: Session,
+    obj: Objective,
+    run: ExecutionRun | None,
+    validation_record: ValidationRecord | None,
+    authorization: SettlementAuthorization | None,
+    settlement: Settlement | None,
+) -> EvidenceTrailOut | None:
+    """Assemble the human-readable output→evidence→validation→authorization→
+    settlement audit trail for an objective.
+
+    Re-derives the normalized evidence deterministically (the same inputs the
+    validator and authorization reasoned over), then threads each evidence step
+    forward to the success criteria it grounds and back to any validator finding
+    that flagged it. The ``evidence_hash`` is the anchor proving the agent was
+    authorized against the exact evidence that was validated.
+    """
+
+    if run is None:
+        return None
+
+    evidence = _objective_evidence(session, obj)
+    if not evidence:
+        return None
+
+    # Map step_index -> set of validation findings flagging an error there.
+    flagged: set[int] = set()
+    for f in (validation_record.findings if validation_record else []) or []:
+        if isinstance(f, dict) and f.get("errors") and f.get("step_index") is not None:
+            flagged.add(int(f["step_index"]))
+
+    # Map step_index -> criterion descriptions this evidence grounds, from the
+    # authorization's per-criterion basis.
+    supports: dict[int, list[str]] = {}
+    if authorization:
+        for r in authorization.criteria_results or []:
+            if not isinstance(r, dict):
+                continue
+            desc = str(r.get("description") or r.get("key") or "")
+            for b in r.get("basis") or []:
+                if isinstance(b, dict) and b.get("step_index") is not None:
+                    supports.setdefault(int(b["step_index"]), [])
+                    if desc and desc not in supports[int(b["step_index"])]:
+                        supports[int(b["step_index"])].append(desc)
+
+    items: list[EvidenceTrailItem] = []
+    for e in evidence:
+        idx = int(e.get("step_index", 0) or 0)
+        text = str(e.get("normalized_text") or "")
+        snippet = text if len(text) <= 200 else text[:197].rstrip() + "…"
+        items.append(
+            EvidenceTrailItem(
+                step_index=idx,
+                step_title=str(e.get("step_title") or "step"),
+                status=str(e.get("status") or "unknown"),
+                output_kind=str(e.get("output_kind") or "free_text"),
+                quality=str(e.get("quality") or "unknown"),
+                has_errors=bool((e.get("signals") or {}).get("error_markers")),
+                snippet=snippet,
+                supports_criteria=supports.get(idx, []),
+                validation_flagged=idx in flagged,
+            )
+        )
+
+    # The cryptographic anchor: validation bound a hash; authorization re-derived
+    # one. They must match for the settlement to be evidence-honest.
+    v_hash = validation_record.evidence_hash if validation_record else None
+    a_hash = authorization.evidence_hash if authorization else None
+    anchor = a_hash or v_hash
+    hash_consistent = bool(v_hash and a_hash and v_hash == a_hash)
+
+    settled = settlement is not None and settlement.status in (
+        SettlementStatus.SETTLED,
+        SettlementStatus.SLASHED,
+    )
+    stages = [
+        EvidenceTrailStage(
+            key="output",
+            label="Execution output",
+            complete=True,
+            detail=f"{len(items)} step output{'s' if len(items) != 1 else ''} recorded",
+        ),
+        EvidenceTrailStage(
+            key="evidence",
+            label="Normalized evidence",
+            complete=True,
+            detail=(
+                f"{len(items)} output{'s' if len(items) != 1 else ''} classified "
+                "and quality-graded by the SLA oracle"
+            ),
+        ),
+        EvidenceTrailStage(
+            key="validation",
+            label="Independent validation",
+            complete=validation_record is not None,
+            detail=(
+                f"validator bound evidence and recommended "
+                f"'{validation_record.recommendation}'"
+                if validation_record
+                else "not yet validated"
+            ),
+        ),
+        EvidenceTrailStage(
+            key="authorization",
+            label="Settlement authorization",
+            complete=authorization is not None,
+            detail=(
+                f"{authorization.criteria_satisfied}/{authorization.criteria_total} "
+                "success criteria satisfied by evidence"
+                if authorization
+                else "not yet authorized"
+            ),
+        ),
+        EvidenceTrailStage(
+            key="settlement",
+            label="Settlement",
+            complete=settled,
+            detail=(
+                f"{settlement.status.value} · {settlement.amount_usdc} USDC"
+                if settled and settlement
+                else "not yet settled"
+            ),
+        ),
+    ]
+
+    return EvidenceTrailOut(
+        evidence_hash=anchor,
+        hash_consistent=hash_consistent,
+        items=items,
+        stages=stages,
+        criteria_total=authorization.criteria_total if authorization else 0,
+        criteria_satisfied=authorization.criteria_satisfied if authorization else 0,
+    )
+
+
+def _onchain_ledger(
+    escrow: EscrowState | None,
+    all_settlements: list[Settlement],
+    treasury,
+    roles: list[WorkflowRole],
+    events: list[GovernanceEvent],
+) -> OnChainLedger | None:
+    """Assemble the full on-chain money trail for an objective.
+
+    Threads the escrow lock and every settlement (objective-level and
+    per-sub-task release/slash) into a single chronological ledger with named
+    counterparties, explorer links, and running totals. Movements whose
+    signature has not yet confirmed are still listed (``confirmed=False``) so the
+    gap is visible rather than hidden.
+    """
+
+    if escrow is None and not all_settlements:
+        return None
+
+    blockchain = (treasury.blockchain if treasury else None) or (
+        escrow.blockchain if escrow and hasattr(escrow, "blockchain") else None
+    )
+    treasury_address = treasury.address if treasury else None
+    treasury_explorer = (
+        f"https://explorer.solana.com/address/{treasury_address}?cluster=devnet"
+        if treasury_address
+        else None
+    )
+    escrow_explorer = (
+        f"https://explorer.solana.com/address/{escrow.address}?cluster=devnet"
+        if escrow and escrow.address
+        else None
+    )
+
+    role_title = {r.id: r.title for r in roles}
+
+    # Payout addresses live on the release/settle events, not on Settlement.
+    obj_payout = next(
+        (
+            e.data.get("payout_address")
+            for e in reversed(events)
+            if e.kind == "settlement.released" and e.data.get("payout_address")
+        ),
+        None,
+    )
+    role_payout: dict[str, str] = {}
+    for e in events:
+        if e.kind == "subtask.settled" and e.data.get("payout_address"):
+            rid = e.data.get("role_id")
+            if rid:
+                role_payout[str(rid)] = str(e.data["payout_address"])
+
+    movements: list[WalletMovement] = []
+    total_locked = Decimal("0")
+    total_released = Decimal("0")
+    total_slashed = Decimal("0")
+    total_fees = Decimal("0")
+
+    # 1. Escrow lock — treasury funds capital into custody.
+    if escrow:
+        try:
+            total_locked = Decimal(escrow.amount_usdc or "0")
+        except InvalidOperation:
+            total_locked = Decimal("0")
+        movements.append(
+            WalletMovement(
+                kind="lock",
+                label="Escrow lock",
+                amount_usdc=escrow.amount_usdc or "0",
+                direction="inbound",
+                from_label="Workspace treasury",
+                from_address=treasury_address,
+                to_label="Escrow",
+                to_address=escrow.address,
+                to_explorer_url=escrow_explorer,
+                tx_hash=escrow.lock_tx_hash,
+                tx_url=_tx_explorer_url(escrow.lock_tx_hash),
+                tx_ref=escrow.lock_tx_ref,
+                confirmed=bool(escrow.lock_tx_hash),
+                occurred_at=escrow.created_at,
+            )
+        )
+
+    # 2. Each settlement — a release to a payout wallet or a slash to treasury.
+    for s in all_settlements:
+        is_release = s.status == SettlementStatus.SETTLED
+        rid = s.role_id
+        try:
+            amt = Decimal(s.amount_usdc or "0")
+        except InvalidOperation:
+            amt = Decimal("0")
+        try:
+            fee = Decimal(s.fee_usdc or "0")
+        except InvalidOperation:
+            fee = Decimal("0")
+
+        if is_release:
+            total_released += amt
+            total_fees += fee
+            to_addr = role_payout.get(rid) if rid else obj_payout
+            label = (
+                f"Release · {role_title.get(rid, 'sub-task')}"
+                if rid
+                else "Release · objective"
+            )
+            movements.append(
+                WalletMovement(
+                    kind="release",
+                    label=label,
+                    amount_usdc=s.amount_usdc or "0",
+                    direction="outbound",
+                    from_label="Escrow",
+                    from_address=escrow.address if escrow else None,
+                    to_label="Agent payout wallet",
+                    to_address=to_addr,
+                    to_explorer_url=(
+                        f"https://explorer.solana.com/address/{to_addr}?cluster=devnet"
+                        if to_addr
+                        else None
+                    ),
+                    tx_hash=s.payout_tx_hash,
+                    tx_url=_tx_explorer_url(s.payout_tx_hash),
+                    tx_ref=s.payout_tx_ref,
+                    confirmed=bool(s.payout_tx_hash),
+                    role_id=rid,
+                    role_title=role_title.get(rid) if rid else None,
+                    occurred_at=s.created_at,
+                )
+            )
+        else:
+            total_slashed += amt
+            label = (
+                f"Slash · {role_title.get(rid, 'sub-task')}"
+                if rid
+                else "Slash · objective"
+            )
+            movements.append(
+                WalletMovement(
+                    kind="slash",
+                    label=label,
+                    amount_usdc=s.amount_usdc or "0",
+                    direction="outbound",
+                    from_label="Escrow",
+                    from_address=escrow.address if escrow else None,
+                    to_label="Workspace treasury",
+                    to_address=treasury_address,
+                    to_explorer_url=treasury_explorer,
+                    tx_hash=s.payout_tx_hash,
+                    tx_url=_tx_explorer_url(s.payout_tx_hash),
+                    tx_ref=s.payout_tx_ref,
+                    confirmed=bool(s.payout_tx_hash),
+                    role_id=rid,
+                    role_title=role_title.get(rid) if rid else None,
+                    occurred_at=s.created_at,
+                )
+            )
+
+    confirmed = sum(1 for m in movements if m.confirmed)
+    return OnChainLedger(
+        blockchain=blockchain,
+        treasury_address=treasury_address,
+        treasury_explorer_url=treasury_explorer,
+        escrow_address=escrow.address if escrow else None,
+        escrow_explorer_url=escrow_explorer,
+        movements=movements,
+        total_locked_usdc=str(total_locked),
+        total_released_usdc=str(total_released),
+        total_slashed_usdc=str(total_slashed),
+        total_fees_usdc=str(total_fees),
+        confirmed_count=confirmed,
+        pending_count=len(movements) - confirmed,
+    )
+
+
 def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
     events = session.exec(
         select(GovernanceEvent)
@@ -1878,11 +2256,22 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         if validation_record
         else None
     )
-    settlement = session.exec(
-        select(Settlement)
-        .where(Settlement.objective_id == obj.id)
-        .order_by(Settlement.created_at.desc())
-    ).first()
+    # Every settlement for the objective — the objective-level payout plus any
+    # per-sub-task settlements produced by the coordination graph. Ordered oldest
+    # first so the on-chain ledger reads chronologically.
+    all_settlements = list(
+        session.exec(
+            select(Settlement)
+            .where(Settlement.objective_id == obj.id)
+            .order_by(Settlement.created_at.asc())
+        ).all()
+    )
+    # The authoritative objective-level settlement (role_id is None) is the one
+    # surfaced in the headline settlement panel; fall back to the latest of any.
+    settlement = next(
+        (s for s in reversed(all_settlements) if s.role_id is None),
+        all_settlements[-1] if all_settlements else None,
+    )
     # payout address is captured on the release event (not stored on Settlement).
     payout_address = next(
         (
@@ -1895,7 +2284,8 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
 
     # Best-effort resolve provider tx ids to confirmed on-chain signatures so the
     # lock/payout become independently verifiable. Persist once resolved so we
-    # only hit the provider until the transaction confirms.
+    # only hit the provider until the transaction confirms. Resolves the escrow
+    # hops and EVERY settlement (objective + per-sub-task), not just the latest.
     _proof_dirty = False
     if escrow and escrow.lock_tx_ref and not escrow.lock_tx_hash:
         h = _resolve_tx_hash(escrow.lock_tx_ref, None)
@@ -1907,16 +2297,16 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         if h:
             escrow.settle_tx_hash = h
             _proof_dirty = True
-    if settlement and settlement.payout_tx_ref and not settlement.payout_tx_hash:
-        h = _resolve_tx_hash(settlement.payout_tx_ref, None)
-        if h:
-            settlement.payout_tx_hash = h
-            _proof_dirty = True
+    for s in all_settlements:
+        if s.payout_tx_ref and not s.payout_tx_hash:
+            h = _resolve_tx_hash(s.payout_tx_ref, None)
+            if h:
+                s.payout_tx_hash = h
+                session.add(s)
+                _proof_dirty = True
     if _proof_dirty:
         if escrow:
             session.add(escrow)
-        if settlement:
-            session.add(settlement)
         session.commit()
         session.refresh(obj)
 
@@ -1933,6 +2323,13 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         if roles
         else None
     )
+    authorization = validation.latest_authorization(session, obj.id)
+    evidence_trail = _evidence_trail(
+        session, obj, run, validation_record, authorization, settlement
+    )
+    onchain_ledger = _onchain_ledger(
+        escrow, all_settlements, treasury, roles, list(events)
+    )
     base = _objective_out(obj)
     return ObjectiveDetailOut(
         **base.model_dump(),
@@ -1947,14 +2344,14 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         evaluation=_evaluation_out(evaluation),
         validation=_validation_out(validation_record, validation_validator),
         audit=_audit_out(review),
-        authorization=_authorization_out(
-            validation.latest_authorization(session, obj.id)
-        ),
+        authorization=_authorization_out(authorization),
         settlement=_settlement_out(settlement, payout_address),
         assigned_agent=assigned_agent,
         workflow=[_role_out(session, r) for r in roles],
         coordination=_coordination_out(roles),
         feasibility=feasibility,
+        evidence_trail=evidence_trail,
+        onchain_ledger=onchain_ledger,
     )
 
 
@@ -1991,6 +2388,11 @@ def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
     ).first()
     settlement_out = _settlement_out(role_settlement, None) if role_settlement else None
 
+    # Advisory Copilot evaluation scoped to this sub-task, when one was produced.
+    evaluation_out = _evaluation_out(
+        _latest_evaluation(session, role.objective_id, role_id=role.id)
+    )
+
     return WorkflowRoleOut(
         id=role.id,
         order_index=role.order_index,
@@ -2010,6 +2412,7 @@ def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
         settlement_status=role.settlement_status,
         authorization=authorization,
         settlement=settlement_out,
+        evaluation=evaluation_out,
     )
 
 
