@@ -19,6 +19,7 @@ import { LifecycleActions } from "@/components/app/lifecycle-actions";
 import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { AssignAgent } from "@/components/app/assign-agent";
 import { WorkflowPanel } from "@/components/app/workflow-panel";
+import { CoordinationPanel } from "@/components/app/coordination-panel";
 import { ProvenanceChain } from "@/components/app/provenance-chain";
 import { SettlementRationale } from "@/components/app/settlement-rationale";
 import { ApiError, apiGet } from "@/lib/api";
@@ -283,6 +284,14 @@ export default async function ObjectiveDetailPage({
               feasibility={obj.feasibility}
               agents={agents}
               locked={settled}
+            />
+          )}
+
+          {!isDraft && obj.coordination && (
+            <CoordinationPanel
+              objectiveId={obj.id}
+              graph={obj.coordination}
+              roles={obj.workflow}
             />
           )}
 

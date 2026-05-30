@@ -170,6 +170,7 @@ export interface CriterionResult {
 export interface SettlementAuthorization {
   id: string;
   objective_id: string;
+  role_id?: string | null;
   evidence_hash: string;
   criteria_results: CriterionResult[];
   criteria_total: number;
@@ -197,6 +198,9 @@ export interface AssignedAgent {
 
 export type RoleStatus = "pending" | "assigned" | "completed" | "failed";
 
+export type SubTaskValidationStatus = "pending" | "passed" | "failed";
+export type SubTaskSettlementStatus = "pending" | "settled" | "slashed";
+
 export interface WorkflowRole {
   id: string;
   order_index: number;
@@ -208,6 +212,52 @@ export interface WorkflowRole {
   allocation_usdc: string;
   status: RoleStatus;
   outcome?: string | null;
+  // Coordination contract + per-sub-task state.
+  depends_on: string[];
+  success_criteria: (string | Record<string, unknown>)[];
+  required_evidence_kinds: string[];
+  required: boolean;
+  validation_status: SubTaskValidationStatus;
+  settlement_status: SubTaskSettlementStatus;
+  authorization?: SettlementAuthorization | null;
+  settlement?: Settlement | null;
+}
+
+// ready: deps satisfied, not yet validated. blocked: a dep still pending.
+// blocked_failed: a dep failed (can never pass). cycle: part of a dep cycle.
+export type DependencyState = "ready" | "blocked" | "blocked_failed" | "cycle";
+
+export interface CoordinationNode {
+  role_id: string;
+  role_key: string;
+  title: string;
+  order_index: number;
+  wave?: number | null;
+  depends_on: string[];
+  required: boolean;
+  allocation_usdc: string;
+  assigned_agent_id?: string | null;
+  validation_status: SubTaskValidationStatus;
+  settlement_status: SubTaskSettlementStatus;
+  dependency_state: DependencyState;
+  ready: boolean;
+}
+
+export interface CoordinationEdge {
+  from_role: string;
+  to_role: string;
+}
+
+export interface CoordinationGraph {
+  nodes: CoordinationNode[];
+  edges: CoordinationEdge[];
+  waves: string[][];
+  has_cycle: boolean;
+  cycle_role_ids: string[];
+  required_total: number;
+  required_passed: number;
+  required_failed: number;
+  parent_settleable: boolean;
 }
 
 export interface FeasibilityRoleCheck {
@@ -251,6 +301,7 @@ export interface ObjectiveDetail extends Objective {
   settlement?: Settlement | null;
   assigned_agent?: AssignedAgent | null;
   workflow: WorkflowRole[];
+  coordination?: CoordinationGraph | null;
   feasibility?: FeasibilityReport | null;
 }
 

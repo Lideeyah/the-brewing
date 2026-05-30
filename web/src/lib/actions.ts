@@ -203,6 +203,48 @@ export async function updateRoleAllocation(
   }
 }
 
+/**
+ * Coordination: validate one sub-task independently. Runs the same evidence
+ * engine + authorization used at the objective level, scoped to the sub-task's
+ * own success criteria. The API enforces the dependency DAG (prerequisite
+ * sub-tasks must have passed), so an out-of-order call comes back as an error.
+ */
+export async function validateSubtask(
+  objectiveId: string,
+  roleId: string,
+): Promise<LifecycleResult> {
+  try {
+    await apiPost<ObjectiveDetail>(
+      `/objectives/${objectiveId}/roles/${roleId}/validate`,
+    );
+    revalidatePath(`/objectives/${objectiveId}`);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/**
+ * Coordination: settle one sub-task independently. A passed sub-task releases
+ * its allocation (net of fee) to its agent; a failed one slashes it back to
+ * treasury. The parent objective stays gated until all required sub-tasks pass.
+ */
+export async function settleSubtask(
+  objectiveId: string,
+  roleId: string,
+): Promise<LifecycleResult> {
+  try {
+    await apiPost<ObjectiveDetail>(
+      `/objectives/${objectiveId}/roles/${roleId}/settle`,
+    );
+    revalidatePath(`/objectives/${objectiveId}`);
+    revalidatePath("/dashboard");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
 /** Result shape for agent self-registration. */
 export type RegisterAgentResult =
   | { ok: true; agent: AgentIdentity }
