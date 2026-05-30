@@ -279,6 +279,57 @@ class TrustScoreOut(BaseModel):
     recent_events: list[ReputationEventOut] = []
 
 
+# --- KPI analytics ----------------------------------------------------------
+
+
+class KpiMetric(BaseModel):
+    """Display-ready rendering of a single KPI for the analytics surface."""
+
+    key: str
+    label: str
+    value: str  # formatted for display (already carries unit, e.g. "1,250 USDC")
+    hint: str | None = None
+    raw: float | None = None  # machine-readable value for charting/thresholds
+
+
+class KpiOut(BaseModel):
+    """Workspace KPI snapshot.
+
+    Provider-agnostic, computed live from the lifecycle tables. ``metrics`` is
+    the display-ready list; the explicit fields below are the raw, queryable
+    values for programmatic consumers (dashboards, alerts, board reporting).
+    """
+
+    generated_at: datetime
+    window: str = "all-time"
+
+    # Governed Transaction Volume: gross USDC that passed through governed
+    # settlement (net released + fees retained + value slashed).
+    governed_transaction_volume_usdc: str
+
+    # Mean Time to Settlement: average wall-clock from escrow lock to settlement.
+    mean_time_to_settlement_seconds: float | None = None
+    mean_time_to_settlement_human: str | None = None
+
+    # Attestation Discrepancy Rate: share of audits where the human overrode the
+    # AI attestation (0..1).
+    attestation_discrepancy_rate: float
+
+    # Active Escrow Accounts: escrow states currently locked.
+    active_escrow_accounts: int
+
+    # Take-Rate Drag: governed fees as a share of governed volume (0..1).
+    take_rate_drag: float
+
+    # Supporting counts / totals.
+    settled_count: int
+    slashed_count: int
+    total_settlements: int
+    fees_collected_usdc: str
+
+    metrics: list[KpiMetric] = []
+
+
 # --- Dashboard --------------------------------------------------------------
 
 

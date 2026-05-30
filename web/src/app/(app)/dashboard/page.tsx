@@ -7,7 +7,7 @@ import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { apiGet } from "@/lib/api";
-import type { Overview } from "@/lib/types";
+import type { Kpis, Overview } from "@/lib/types";
 import {
   STATUS_META,
   eventTone,
@@ -23,7 +23,15 @@ export default async function DashboardPage() {
     overview = null;
   }
 
+  let kpis: Kpis | null = null;
+  try {
+    kpis = await apiGet<Kpis>("/analytics/kpis");
+  } catch {
+    kpis = null;
+  }
+
   const metrics = overview?.metrics ?? [];
+  const kpiMetrics = kpis?.metrics ?? [];
   const objectives = overview?.objectives ?? [];
   const events = overview?.recent_events ?? [];
   const statusCounts = overview?.status_counts ?? {};
@@ -56,6 +64,28 @@ export default async function DashboardPage() {
         </div>
 
         <NonCustodialNote className="mt-4" />
+
+        {/* Governed settlement KPIs — board-level network health */}
+        {kpiMetrics.length > 0 && (
+          <Panel className="mt-4">
+            <PanelHeader title="Settlement KPIs" meta="all-time" />
+            <div className="grid grid-cols-2 divide-x divide-y divide-border lg:grid-cols-5">
+              {kpiMetrics.map((m) => (
+                <div key={m.key} className="p-4">
+                  <div className="font-operational text-[20px] leading-none tracking-tight text-foreground">
+                    {m.value}
+                  </div>
+                  <div className="mt-2 text-[12px] text-secondary">{m.label}</div>
+                  {m.hint && (
+                    <div className="mt-1 text-[10px] leading-snug text-muted">
+                      {m.hint}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </Panel>
+        )}
 
         {/* Lifecycle pipeline — the Intent -> Settlement loop at a glance */}
         {totalObjectives > 0 && (

@@ -137,3 +137,27 @@ export interface Overview {
   objectives: Objective[];
   recent_events: GovernanceEvent[];
 }
+
+export interface KpiMetric {
+  key: string;
+  label: string;
+  value: string;
+  hint?: string | null;
+  raw?: number | null;
+}
+
+export interface Kpis {
+  generated_at: string;
+  window: string;
+  governed_transaction_volume_usdc: string;
+  mean_time_to_settlement_seconds?: number | null;
+  mean_time_to_settlement_human?: string | null;
+  attestation_discrepancy_rate: number;
+  active_escrow_accounts: number;
+  take_rate_drag: number;
+  settled_count: number;
+  slashed_count: number;
+  total_settlements: number;
+  fees_collected_usdc: string;
+  metrics: KpiMetric[];
+}
