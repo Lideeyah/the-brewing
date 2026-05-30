@@ -630,6 +630,376 @@ def _objective_evidence(session: Session, obj: Objective) -> list[dict]:
     return [e.to_dict() for e in oracle.build_evidence(step_dicts)]
 
 
+def _objective_evidence_bundle(
+    session: Session, obj: Objective
+) -> tuple[list[dict], dict]:
+    """Build (evidence_dicts, evidence_summary) for an objective's latest run.
+
+    Sub-task validation reuses the exact same evidence the objective-level
+    validator reasons over — there is no separate sub-task evidence store. What
+    differs per sub-task is the *contract* (its own success criteria) judged
+    against this shared evidence, not the evidence itself.
+    """
+
+    run = session.exec(
+        select(ExecutionRun)
+        .where(ExecutionRun.objective_id == obj.id)
+        .order_by(ExecutionRun.created_at.desc())
+    ).first()
+    steps = (
+        session.exec(
+            select(ExecutionStep)
+            .where(ExecutionStep.run_id == run.id)
+            .order_by(ExecutionStep.index.asc())
+        ).all()
+        if run
+        else []
+    )
+    step_dicts = [
+        {
+            "index": s.index,
+            "title": s.title,
+            "status": s.status.value,
+            "output": s.output,
+        }
+        for s in steps
+    ]
+    evidence_objs = oracle.build_evidence(step_dicts)
+    return (
+        [e.to_dict() for e in evidence_objs],
+        oracle.evidence_summary(evidence_objs),
+    )
+
+
+def _get_owned_role(
+    session: Session, obj: Objective, role_id: str
+) -> WorkflowRole:
+    role = session.get(WorkflowRole, role_id)
+    if role is None or role.objective_id != obj.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Role not found"
+        )
+    return role
+
+
+@router.post(
+    "/{objective_id}/roles/{role_id}/validate", response_model=ObjectiveDetailOut
+)
+def validate_subtask(
+    objective_id: str,
+    role_id: str,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    """Validate one coordination sub-task independently.
+
+    Runs the *same* independent validation engine and evidence-grounded
+    authorization used at the objective level, but scoped to this sub-task's own
+    success criteria and bound to its role_id. A sub-task can only be validated
+    once its dependency sub-tasks have themselves passed validation (the
+    coordination graph's execution order), so the DAG is honored. Sets the
+    sub-task's validation_status to passed | failed from the evidence verdict.
+    """
+
+    obj = _get_owned_objective(session, workspace, objective_id)
+    role = _get_owned_role(session, obj, role_id)
+
+    # Evidence must exist — the objective has to have executed at least once.
+    run = session.exec(
+        select(ExecutionRun)
+        .where(ExecutionRun.objective_id == obj.id)
+        .order_by(ExecutionRun.created_at.desc())
+    ).first()
+    if run is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The objective must execute before a sub-task can be validated.",
+        )
+    if role.validation_status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Sub-task already validated ({role.validation_status}).",
+        )
+
+    # Honor the dependency DAG: every prerequisite sub-task must have passed.
+    roles = workflow_domain.get_roles(session, obj.id)
+    graph = workflow_domain.coordination_graph(roles)
+    node = next((n for n in graph["nodes"] if n["role_id"] == role.id), None)
+    if node and node["dependency_state"] == "cycle":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Sub-task is part of a dependency cycle and cannot be validated.",
+        )
+    if node and node["dependency_state"] == "blocked_failed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A prerequisite sub-task failed validation; this sub-task cannot pass.",
+        )
+    if node and node["dependency_state"] == "blocked":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Sub-task is blocked: its dependencies have not all passed "
+                "validation yet."
+            ),
+        )
+
+    evidence_dicts, evidence_summary = _objective_evidence_bundle(session, obj)
+
+    record = None
+    authorization = None
+    try:
+        record = validation.run_validation(
+            session,
+            objective_id=obj.id,
+            workspace_id=obj.workspace_id,
+            evidence=evidence_dicts,
+            evidence_summary=evidence_summary,
+            executor_agent_id=role.assigned_agent_id,
+            role_id=role.id,
+        )
+        # Authorize against THIS sub-task's own success criteria.
+        authorization = validation.record_authorization(
+            session,
+            objective_id=obj.id,
+            raw_criteria=list(role.success_criteria or []),
+            evidence=evidence_dicts,
+            approved=record.recommendation != validation.REJECTED,
+            role_id=role.id,
+        )
+    except Exception as exc:  # noqa: BLE001 — never 500 on a validation engine miss
+        logger.warning("Sub-task validation engine error: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Sub-task validation failed to run.",
+        )
+
+    passed = authorization.evidence_verdict != validation.REJECTED
+    role.validation_status = "passed" if passed else "failed"
+    role.updated_at = datetime.now(timezone.utc)
+    session.add(role)
+
+    validator = session.get(Validator, record.validator_id)
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="subtask.validated",
+        message=(
+            f"Sub-task '{role.title}' {'passed' if passed else 'failed'} independent "
+            f"validation: {authorization.criteria_satisfied}/{authorization.criteria_total} "
+            f"of its success criteria are satisfied by evidence "
+            f"(verdict '{authorization.evidence_verdict}', validated by "
+            f"{validator.name if validator else 'independent validator'})."
+        ),
+        actor=validator.validator_key if validator else "validator",
+        data={
+            "role_id": role.id,
+            "role_key": role.role_key,
+            "validation_status": role.validation_status,
+            "evidence_verdict": authorization.evidence_verdict,
+            "criteria_satisfied": authorization.criteria_satisfied,
+            "criteria_total": authorization.criteria_total,
+            "evidence_hash": authorization.evidence_hash,
+            "validator_id": record.validator_id,
+            "confidence": record.confidence,
+        },
+    )
+    session.commit()
+    session.refresh(obj)
+    return _detail(session, obj)
+
+
+@router.post(
+    "/{objective_id}/roles/{role_id}/settle", response_model=ObjectiveDetailOut
+)
+def settle_subtask(
+    objective_id: str,
+    role_id: str,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    """Settle one coordination sub-task independently.
+
+    A sub-task that passed validation releases its own allocation (net of the
+    hybrid volume fee) to a per-sub-task payout wallet; one that failed slashes
+    its allocation back to the workspace treasury. The release/slash is a real
+    partial movement against the objective's escrow, recorded as a Settlement
+    bound to the role_id, and the assigned agent's reputation is attributed
+    immediately. The parent objective is unaffected until its own settle gate.
+    """
+
+    obj = _get_owned_objective(session, workspace, objective_id)
+    role = _get_owned_role(session, obj, role_id)
+
+    if role.validation_status == "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Validate the sub-task before settling it.",
+        )
+    if role.settlement_status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Sub-task already settled ({role.settlement_status}).",
+        )
+
+    escrow = session.exec(
+        select(EscrowState)
+        .where(EscrowState.objective_id == obj.id)
+        .order_by(EscrowState.created_at.desc())
+    ).first()
+    if escrow is None or escrow.status != EscrowStatus.LOCKED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No locked escrow is available to settle this sub-task against.",
+        )
+
+    treasury = workspace_service.get_treasury(session, workspace.id)
+    if not treasury or not treasury.provider_wallet_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Workspace treasury is not provisioned.",
+        )
+    treasury_ref = WalletRef(
+        provider_wallet_id=treasury.provider_wallet_id,
+        address=treasury.address or "",
+        blockchain=treasury.blockchain or "",
+    )
+
+    try:
+        alloc = Decimal(role.allocation_usdc or "0")
+    except InvalidOperation:
+        alloc = Decimal("0")
+
+    released = role.validation_status == "passed"
+    authorization = validation.latest_authorization(session, obj.id, role_id=role.id)
+
+    try:
+        provider = get_settlement_provider()
+        if released:
+            quote = quote_settlement_fee(alloc)
+            fee = quote.fee_usdc
+            net = (alloc - fee).quantize(_USDC_QUANT)
+            payout = provider.provision_treasury_wallet(f"payout-{obj.id}-{role.id}")
+            transfer = provider.release_escrow(
+                EscrowRef(
+                    provider_escrow_id=escrow.provider_escrow_id or "",
+                    address=escrow.address or "",
+                    amount=net,
+                ),
+                payout,
+            )
+            settlement = Settlement(
+                objective_id=obj.id,
+                role_id=role.id,
+                status=SettlementStatus.SETTLED,
+                amount_usdc=str(net),
+                fee_usdc=str(fee),
+                fee_basis=quote.basis,
+                payout_tx_ref=transfer.tx_ref,
+            )
+            session.add(settlement)
+            role.settlement_status = "settled"
+            role.outcome = "released"
+            role.status = RoleStatus.COMPLETED
+            log_event(
+                session,
+                objective_id=obj.id,
+                kind="subtask.settled",
+                message=(
+                    f"Sub-task '{role.title}' settled independently: released {net} USDC "
+                    f"to its agent (fee {fee} USDC, {quote.basis})"
+                    + (
+                        f" — authorized by {authorization.criteria_satisfied}"
+                        f"/{authorization.criteria_total} satisfied success criteria."
+                        if authorization
+                        else "."
+                    )
+                ),
+                actor=user.id,
+                data={
+                    "role_id": role.id,
+                    "role_key": role.role_key,
+                    "net_usdc": str(net),
+                    "fee_usdc": str(fee),
+                    "fee_basis": quote.basis,
+                    "payout_address": payout.address,
+                    "payout_tx_ref": transfer.tx_ref,
+                    "agent_id": role.assigned_agent_id,
+                    "authorization_id": authorization.id if authorization else None,
+                    "evidence_hash": authorization.evidence_hash if authorization else None,
+                },
+            )
+        else:
+            transfer = provider.slash_escrow(
+                EscrowRef(
+                    provider_escrow_id=escrow.provider_escrow_id or "",
+                    address=escrow.address or "",
+                    amount=alloc,
+                ),
+                treasury_ref,
+            )
+            settlement = Settlement(
+                objective_id=obj.id,
+                role_id=role.id,
+                status=SettlementStatus.SLASHED,
+                amount_usdc=str(alloc),
+                fee_usdc="0",
+                fee_basis="slashed — no fee",
+                payout_tx_ref=transfer.tx_ref,
+            )
+            session.add(settlement)
+            role.settlement_status = "slashed"
+            role.outcome = "slashed"
+            role.status = RoleStatus.FAILED
+            log_event(
+                session,
+                objective_id=obj.id,
+                kind="subtask.slashed",
+                message=(
+                    f"Sub-task '{role.title}' failed validation; slashed {alloc} USDC "
+                    "back to treasury."
+                ),
+                actor=user.id,
+                data={
+                    "role_id": role.id,
+                    "role_key": role.role_key,
+                    "amount_usdc": str(alloc),
+                    "treasury_address": treasury.address,
+                    "slash_tx_ref": transfer.tx_ref,
+                    "agent_id": role.assigned_agent_id,
+                },
+            )
+    except SettlementConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        )
+
+    role.updated_at = datetime.now(timezone.utc)
+    session.add(role)
+
+    # Attribute the sub-task outcome to its assigned agent immediately, reusing
+    # the registry's single reputation mutation point. Never blocks settlement.
+    if role.assigned_agent_id:
+        try:
+            agent = session.get(AgentIdentity, role.assigned_agent_id)
+            if agent is not None:
+                registry.record_outcome(
+                    session,
+                    agent=agent,
+                    objective_id=obj.id,
+                    success=released,
+                    note=f"sub-task settlement ({role.role_key})",
+                )
+        except Exception as exc:  # noqa: BLE001 — registry must never block settlement
+            logger.warning("Sub-task reputation attribution skipped: %s", exc)
+
+    session.commit()
+    session.refresh(obj)
+    return _detail(session, obj)
+
+
 @router.post("/{objective_id}/audit/evaluate", response_model=ObjectiveDetailOut)
 async def evaluate_governance_route(
     objective_id: str,
@@ -980,9 +1350,73 @@ def settle_objective(
     except InvalidOperation:
         amount = Decimal("0")
 
+    # Coordination gate: when sub-tasks have begun settling/validating
+    # independently, the parent objective can only finalize once every
+    # *required* sub-task has passed validation, and it settles only the escrow
+    # not already resolved at the sub-task level (so nothing is paid twice).
+    roles = workflow_domain.get_roles(session, obj.id)
+    graph = workflow_domain.coordination_graph(roles) if roles else None
+    subtask_mode = bool(roles) and any(
+        r.validation_status != "pending" or r.settlement_status != "pending"
+        for r in roles
+    )
+    if approved and subtask_mode and graph and not graph["parent_settleable"]:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Parent objective can only settle once every required sub-task "
+                f"has passed validation ({graph['required_passed']}/"
+                f"{graph['required_total']} required sub-tasks passed)."
+            ),
+        )
+    # Subtract escrow already resolved by independent sub-task settlement.
+    accounted = sum(
+        (
+            Decimal(r.allocation_usdc or "0")
+            for r in roles
+            if r.settlement_status in ("settled", "slashed")
+        ),
+        Decimal("0"),
+    )
+    remaining = (amount - accounted).quantize(_USDC_QUANT)
+    if remaining < 0:
+        remaining = Decimal("0")
+
     try:
         provider = get_settlement_provider()
-        if approved:
+        if approved and remaining <= 0:
+            # Every allocation was already released/slashed per sub-task; the
+            # parent only needs to finalize state, with no further transfer.
+            escrow.status = EscrowStatus.RELEASED
+            session.add(escrow)
+            session.add(
+                Settlement(
+                    objective_id=obj.id,
+                    status=SettlementStatus.SETTLED,
+                    amount_usdc="0",
+                    fee_usdc="0",
+                    fee_basis="fully settled via sub-tasks",
+                    payout_tx_ref=None,
+                )
+            )
+            obj.status = ObjectiveStatus.SETTLED
+            log_event(
+                session,
+                objective_id=obj.id,
+                kind="settlement.released",
+                message=(
+                    "Parent objective finalized: all escrow was already released "
+                    "or slashed through independent sub-task settlement."
+                ),
+                actor=user.id,
+                data={
+                    "net_usdc": "0",
+                    "accounted_usdc": str(accounted),
+                    "parent_settleable": graph["parent_settleable"] if graph else None,
+                },
+            )
+        elif approved:
+            amount = remaining
             quote = quote_settlement_fee(amount)
             fee = quote.fee_usdc
             net = (amount - fee).quantize(_USDC_QUANT)
@@ -1045,6 +1479,8 @@ def settle_objective(
                 },
             )
         else:
+            # Slash only the escrow not already resolved at the sub-task level.
+            amount = remaining
             transfer = provider.slash_escrow(
                 EscrowRef(
                     provider_escrow_id=escrow.provider_escrow_id or "",

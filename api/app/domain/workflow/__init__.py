@@ -462,11 +462,17 @@ def settle_roles(
     agent; on rejection, each role is slashed. Roles with no assigned agent are
     still marked so the workflow reflects a complete, auditable outcome. Returns
     the roles whose outcome was set.
+
+    Sub-tasks that already settled *independently* (settlement_status settled or
+    slashed) keep their own outcome — the parent settle never overwrites a result
+    a sub-task already reached on its own.
     """
 
     roles = get_roles(session, objective_id)
     resolved: list[WorkflowRole] = []
     for role in roles:
+        if role.settlement_status in ("settled", "slashed"):
+            continue  # already resolved at the sub-task level; don't overwrite
         if approved:
             role.outcome = "released"
             role.status = RoleStatus.COMPLETED

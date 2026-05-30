@@ -277,6 +277,11 @@ def record_settlement_outcome(
         agent_id = role.assigned_agent_id
         if not agent_id or agent_id in handled_agent_ids:
             continue
+        # Sub-tasks settled independently already attributed their outcome to the
+        # assigned agent at sub-task settle time; don't double-count here.
+        if getattr(role, "settlement_status", "pending") in ("settled", "slashed"):
+            handled_agent_ids.add(agent_id)
+            continue
         agent = session.get(AgentIdentity, agent_id)
         if agent is None:
             continue

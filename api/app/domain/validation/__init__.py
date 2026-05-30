@@ -234,12 +234,17 @@ def run_validation(
     evidence_summary: dict,
     executor_agent_id: str | None,
     evaluation_id: str | None = None,
+    role_id: str | None = None,
 ) -> ValidationRecord:
     """Run an independent validation pass and persist a tamper-evident record.
 
     The selected validator is, by construction, never the executor agent: it is
     drawn from the workspace's system-validator set, a disjoint identity space
     from the agent registry.
+
+    When ``role_id`` is given the record is scoped to one coordination sub-task,
+    so the same engine validates an individual sub-task's evidence exactly as it
+    validates the whole objective — no parallel sub-task validator.
     """
 
     validators = ensure_validators(session, workspace_id)
@@ -250,6 +255,7 @@ def run_validation(
 
     record = ValidationRecord(
         objective_id=objective_id,
+        role_id=role_id,
         validator_id=validator.id,
         evaluation_id=evaluation_id,
         recommendation=recommendation,
@@ -275,12 +281,24 @@ def run_validation(
     return record
 
 
-def latest_record(session: Session, objective_id: str) -> ValidationRecord | None:
-    return session.exec(
-        select(ValidationRecord)
-        .where(ValidationRecord.objective_id == objective_id)
-        .order_by(ValidationRecord.created_at.desc())
-    ).first()
+def latest_record(
+    session: Session, objective_id: str, role_id: str | None = None
+) -> ValidationRecord | None:
+    """Most recent validation record for an objective, or a specific sub-task.
+
+    Passing ``role_id`` returns the latest record scoped to that sub-task;
+    omitting it returns the latest **objective-level** record (role_id is NULL),
+    so sub-task validations never shadow the objective's own validation.
+    """
+
+    stmt = select(ValidationRecord).where(
+        ValidationRecord.objective_id == objective_id
+    )
+    if role_id is None:
+        stmt = stmt.where(ValidationRecord.role_id.is_(None))
+    else:
+        stmt = stmt.where(ValidationRecord.role_id == role_id)
+    return session.exec(stmt.order_by(ValidationRecord.created_at.desc())).first()
 
 
 def record_authorization(
@@ -290,6 +308,7 @@ def record_authorization(
     raw_criteria: object,
     evidence: list[dict],
     approved: bool,
+    role_id: str | None = None,
 ) -> SettlementAuthorization:
     """Persist the evidence-grounded authorization to settle an objective.
 
@@ -315,6 +334,7 @@ def record_authorization(
 
     authorization = SettlementAuthorization(
         objective_id=objective_id,
+        role_id=role_id,
         evidence_hash=digest,
         criteria_results=results,
         criteria_total=summary["total"],
@@ -333,12 +353,23 @@ def record_authorization(
 
 
 def latest_authorization(
-    session: Session, objective_id: str
+    session: Session, objective_id: str, role_id: str | None = None
 ) -> SettlementAuthorization | None:
+    """Most recent settlement authorization for an objective, or a sub-task.
+
+    Passing ``role_id`` scopes to one sub-task's authorization; omitting it
+    returns the latest **objective-level** authorization (role_id is NULL).
+    """
+
+    stmt = select(SettlementAuthorization).where(
+        SettlementAuthorization.objective_id == objective_id
+    )
+    if role_id is None:
+        stmt = stmt.where(SettlementAuthorization.role_id.is_(None))
+    else:
+        stmt = stmt.where(SettlementAuthorization.role_id == role_id)
     return session.exec(
-        select(SettlementAuthorization)
-        .where(SettlementAuthorization.objective_id == objective_id)
-        .order_by(SettlementAuthorization.created_at.desc())
+        stmt.order_by(SettlementAuthorization.created_at.desc())
     ).first()
 
 
