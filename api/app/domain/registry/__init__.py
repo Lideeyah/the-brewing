@@ -27,6 +27,7 @@ from app.models import (
     FeedbackCommitment,
     Objective,
     ReputationEvent,
+    WorkflowRole,
 )
 
 # Starting reputation baseline once an agent has at least one outcome.
@@ -210,6 +211,9 @@ def record_settlement_outcome(
          committed agent's reputation moves whether the result is good or bad.
       2. If the objective has an assigned agent that had no commitment, records
          the outcome directly.
+      3. Attributes a per-role outcome to every agent bound to a workflow role,
+         so a multi-agent objective moves the reputation of each contributor —
+         crediting agents on released roles and debiting them on slashed ones.
 
     Returns the agent identities whose reputation was updated. Never raises on a
     missing/unregistered agent — settlement must not be blocked by the registry.
@@ -217,6 +221,7 @@ def record_settlement_outcome(
 
     affected: list[AgentIdentity] = []
     revealed_agent_ids: set[str] = set()
+    handled_agent_ids: set[str] = set()
 
     pending = session.exec(
         select(FeedbackCommitment).where(
@@ -240,9 +245,10 @@ def record_settlement_outcome(
             # Signature failed to verify — skip rather than block settlement.
             continue
         revealed_agent_ids.add(agent.id)
+        handled_agent_ids.add(agent.id)
         affected.append(agent)
 
-    if objective.agent_id and objective.agent_id not in revealed_agent_ids:
+    if objective.agent_id and objective.agent_id not in handled_agent_ids:
         agent = session.get(AgentIdentity, objective.agent_id)
         if agent is not None:
             record_outcome(
@@ -252,7 +258,35 @@ def record_settlement_outcome(
                 success=success,
                 note="settlement outcome",
             )
+            handled_agent_ids.add(agent.id)
             affected.append(agent)
+
+    # Per-role attribution: every agent bound to a workflow role earns the
+    # role's outcome. A role marked "slashed" debits its agent even when the
+    # objective as a whole settled (partial settlement), and vice versa. Each
+    # agent is counted once per objective to avoid inflating from repeat roles.
+    roles = session.exec(
+        select(WorkflowRole).where(WorkflowRole.objective_id == objective.id)
+    ).all()
+    for role in roles:
+        agent_id = role.assigned_agent_id
+        if not agent_id or agent_id in handled_agent_ids:
+            continue
+        agent = session.get(AgentIdentity, agent_id)
+        if agent is None:
+            continue
+        role_success = (
+            role.outcome == "released" if role.outcome is not None else success
+        )
+        record_outcome(
+            session,
+            agent=agent,
+            objective_id=objective.id,
+            success=role_success,
+            note=f"role settlement outcome ({role.role_key})",
+        )
+        handled_agent_ids.add(agent_id)
+        affected.append(agent)
 
     return affected
 

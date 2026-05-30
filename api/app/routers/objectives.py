@@ -979,6 +979,44 @@ def settle_objective(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
 
+    # Partial settlement: resolve each workflow role's outcome (released vs.
+    # slashed) so a multi-agent objective records a per-role result, not just a
+    # single objective-level verdict. Runs before the reputation wiring so each
+    # role's outcome can attribute to its assigned agent. Never blocks settlement.
+    try:
+        resolved_roles = workflow_domain.settle_roles(
+            session, objective_id=obj.id, approved=approved
+        )
+    except Exception as exc:  # noqa: BLE001 — role settlement must never block
+        logger.warning("Role settlement skipped: %s", exc)
+        resolved_roles = []
+    if resolved_roles:
+        released = sum(1 for r in resolved_roles if r.outcome == "released")
+        slashed = len(resolved_roles) - released
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="settlement.roles",
+            message=(
+                f"Resolved {len(resolved_roles)} workflow role(s): "
+                f"{released} released, {slashed} slashed."
+            ),
+            actor="settlement-engine",
+            data={
+                "released": released,
+                "slashed": slashed,
+                "roles": [
+                    {
+                        "role_key": r.role_key,
+                        "allocation_usdc": r.allocation_usdc,
+                        "outcome": r.outcome,
+                        "agent_id": r.assigned_agent_id,
+                    }
+                    for r in resolved_roles
+                ],
+            },
+        )
+
     # Reputation feedback loop: fold the settlement outcome back into the agent
     # identity registry automatically. Auto-reveals any pre-committed blind
     # feedback for this objective and records the outcome for the assigned
