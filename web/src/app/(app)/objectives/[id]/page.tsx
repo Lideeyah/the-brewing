@@ -1,6 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Check, ExternalLink, Sparkles, X } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ExternalLink,
+  Fingerprint,
+  ShieldCheck,
+  Sparkles,
+  X,
+} from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
@@ -53,6 +61,7 @@ export default async function ObjectiveDetailPage({
   const canLockEscrow = obj.status === "copilot_structured";
   const execution = obj.execution;
   const evaluation = obj.evaluation;
+  const validation = obj.validation;
   const audit = obj.audit;
   const settlement = obj.settlement;
   const auditApproved = audit?.status === "approved";
@@ -386,6 +395,100 @@ export default async function ObjectiveDetailPage({
                     </li>
                   ))}
                 </ol>
+              </PanelBody>
+            </Panel>
+          )}
+
+          {/* Independent validation (evidence-bound, executor-independent) */}
+          {validation && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="Independent validation"
+                meta={`${validation.validator?.name ?? "Validator"} · evidence-bound`}
+              />
+              <PanelBody className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <ShieldCheck size={14} className="text-accent" />
+                  <span className="text-[12px] text-muted">
+                    Validator recommendation
+                  </span>
+                  <StatusPill tone={recMeta(validation.recommendation).tone}>
+                    {recMeta(validation.recommendation).label}
+                  </StatusPill>
+                  <span className="font-operational text-[11px] text-muted">
+                    {Math.round(validation.confidence * 100)}% confidence
+                  </span>
+                  {validation.independent_of_executor && (
+                    <StatusPill tone="neutral" dot={false}>
+                      independent of executor
+                    </StatusPill>
+                  )}
+                </div>
+
+                {validation.reasoning && (
+                  <p className="text-[13px] leading-relaxed text-secondary">
+                    {validation.reasoning}
+                  </p>
+                )}
+
+                {validation.findings.length > 0 && (
+                  <div>
+                    <p className="mb-2 font-operational text-[11px] uppercase tracking-wider text-muted">
+                      Evidence reviewed
+                    </p>
+                    <ul className="space-y-1.5">
+                      {validation.findings.map((f, i) => (
+                        <li
+                          key={i}
+                          className="flex items-center gap-2 text-[12px] text-secondary"
+                        >
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                              f.errors
+                                ? "bg-failure"
+                                : f.quality === "strong"
+                                  ? "bg-success"
+                                  : "bg-pending"
+                            }`}
+                          />
+                          <span className="truncate text-foreground">
+                            {f.step_title ?? `Step ${(f.step_index ?? 0) + 1}`}
+                          </span>
+                          <span className="font-operational text-[10px] uppercase tracking-wider text-muted">
+                            {f.output_kind} · {f.quality}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="flex items-start gap-2 border-t border-border pt-3">
+                  <Fingerprint size={13} className="mt-0.5 shrink-0 text-muted" />
+                  <div className="min-w-0">
+                    <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                      Evidence hash
+                    </p>
+                    <p className="mt-0.5 break-all font-operational text-[11px] text-secondary">
+                      {validation.evidence_hash}
+                    </p>
+                  </div>
+                </div>
+
+                {validation.outcome != null && (
+                  <div className="flex items-center gap-2 text-[12px]">
+                    <span className="text-muted">Reconciled vs. decision:</span>
+                    <StatusPill tone={validation.upheld ? "success" : "failure"}>
+                      {validation.upheld ? "upheld" : "overturned"}
+                    </StatusPill>
+                  </div>
+                )}
+
+                <p className="border-t border-border pt-3 text-[11px] text-muted">
+                  Validation is performed by an identity distinct from the
+                  executor and bound to a hash of the exact evidence reviewed —
+                  execution never validates itself.
+                </p>
               </PanelBody>
             </Panel>
           )}

@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Sparkles,
   Target,
+  Verified,
 } from "lucide-react";
 
 import { Logo } from "@/components/brand/logo";
@@ -23,6 +24,7 @@ const nav = [
   { href: "/coordinate", label: "Coordinate", icon: Sparkles },
   { href: "/objectives", label: "Objectives", icon: Target },
   { href: "/agents", label: "Agents", icon: Bot },
+  { href: "/validation", label: "Validation", icon: Verified },
   { href: "/governance", label: "Governance", icon: ShieldCheck },
   { href: "/auditor", label: "Auditor", icon: ClipboardCheck },
   { href: "/treasury", label: "Treasury", icon: Landmark },

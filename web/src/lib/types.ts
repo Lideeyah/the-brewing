@@ -107,6 +107,48 @@ export interface Settlement {
   explorer_url?: string | null;
 }
 
+export interface Validator {
+  id: string;
+  validator_key: string;
+  name: string;
+  kind: string;
+  description?: string | null;
+  independent: boolean;
+  active: boolean;
+  validations_count: number;
+  upheld_count: number;
+  overturned_count: number;
+  accuracy?: number | null;
+  mean_confidence: number;
+  created_at: string;
+}
+
+export interface ValidationFinding {
+  step_index?: number | null;
+  step_title?: string | null;
+  output_kind?: string | null;
+  quality?: string | null;
+  errors: boolean;
+}
+
+export interface ValidationRecord {
+  id: string;
+  objective_id: string;
+  recommendation: Recommendation;
+  confidence: number;
+  reasoning: string;
+  findings: ValidationFinding[];
+  evidence_hash: string;
+  evidence_summary: Record<string, unknown>;
+  executor_agent_id?: string | null;
+  independent_of_executor: boolean;
+  outcome?: string | null;
+  upheld?: boolean | null;
+  created_at: string;
+  reconciled_at?: string | null;
+  validator?: Validator | null;
+}
+
 export interface AssignedAgent {
   id: string;
   token_id: string;
@@ -131,6 +173,7 @@ export interface ObjectiveDetail extends Objective {
   treasury_address?: string | null;
   execution?: ExecutionRun | null;
   evaluation?: GovernanceEvaluation | null;
+  validation?: ValidationRecord | null;
   audit?: AuditReview | null;
   settlement?: Settlement | null;
   assigned_agent?: AssignedAgent | null;
