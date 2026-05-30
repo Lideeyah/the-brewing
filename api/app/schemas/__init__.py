@@ -220,6 +220,7 @@ class SettlementAuthorizationOut(BaseModel):
 
     id: str
     objective_id: str
+    role_id: str | None = None  # set when scoped to a coordination sub-task
     evidence_hash: str
     criteria_results: list[CriterionResultOut] = []
     criteria_total: int = 0
@@ -258,7 +259,13 @@ class AuditDecision(BaseModel):
 
 
 class WorkflowRoleOut(BaseModel):
-    """One independently assignable role in an objective's workflow."""
+    """One independently assignable sub-task in an objective's coordination graph.
+
+    Beyond assignment + allocation, a sub-task carries its own coordination
+    contract — dependency edges, success criteria, required evidence kinds — and
+    its own validation + settlement state, plus the evidence-grounded
+    authorization and settlement record produced when it resolves independently.
+    """
 
     id: str
     order_index: int
@@ -270,6 +277,55 @@ class WorkflowRoleOut(BaseModel):
     allocation_usdc: str = "0"
     status: str = "pending"
     outcome: str | None = None  # released | slashed, set at settlement
+
+    # --- Coordination contract & sub-task state -----------------------------
+    depends_on: list[str] = []  # sibling role ids that must pass first
+    success_criteria: list = []  # per-sub-task criteria (str or dict)
+    required_evidence_kinds: list[str] = []
+    required: bool = True  # whether the parent settle is gated on this sub-task
+    validation_status: str = "pending"  # pending | passed | failed
+    settlement_status: str = "pending"  # pending | settled | slashed
+    # The per-sub-task "why was this paid?" artifact + settlement, when resolved.
+    authorization: "SettlementAuthorizationOut | None" = None
+    settlement: "SettlementOut | None" = None
+
+
+class CoordinationNodeOut(BaseModel):
+    """A sub-task as a node in the execution DAG (graph-derived view)."""
+
+    role_id: str
+    role_key: str
+    title: str
+    order_index: int
+    wave: int | None = None  # topological execution layer (0 = no prerequisites)
+    depends_on: list[str] = []
+    required: bool = True
+    allocation_usdc: str = "0"
+    assigned_agent_id: str | None = None
+    validation_status: str = "pending"
+    settlement_status: str = "pending"
+    # ready | blocked | blocked_failed | cycle — derived from dependency outcomes.
+    dependency_state: str = "ready"
+    ready: bool = False  # dependencies satisfied and not yet validated
+
+
+class CoordinationEdgeOut(BaseModel):
+    from_role: str
+    to_role: str
+
+
+class CoordinationGraphOut(BaseModel):
+    """The objective's sub-task dependency DAG, execution order, and settle gate."""
+
+    nodes: list[CoordinationNodeOut] = []
+    edges: list[CoordinationEdgeOut] = []
+    waves: list[list[str]] = []  # role ids grouped by execution wave
+    has_cycle: bool = False
+    cycle_role_ids: list[str] = []
+    required_total: int = 0
+    required_passed: int = 0
+    required_failed: int = 0
+    parent_settleable: bool = False  # gate: all required sub-tasks passed
 
 
 class FeasibilityRoleCheck(BaseModel):
@@ -320,6 +376,7 @@ class ObjectiveDetailOut(ObjectiveOut):
     settlement: SettlementOut | None = None
     assigned_agent: "AssignedAgentOut | None" = None
     workflow: list["WorkflowRoleOut"] = []
+    coordination: "CoordinationGraphOut | None" = None
     feasibility: "FeasibilityReport | None" = None
 
 

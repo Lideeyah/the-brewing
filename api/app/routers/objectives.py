@@ -49,6 +49,9 @@ from app.schemas import (
     AssignedAgentOut,
     AuditDecision,
     AuditReviewOut,
+    CoordinationEdgeOut,
+    CoordinationGraphOut,
+    CoordinationNodeOut,
     CriterionBasisOut,
     CriterionResultOut,
     EscrowOut,
@@ -1787,6 +1790,7 @@ def _authorization_out(
     return SettlementAuthorizationOut(
         id=authorization.id,
         objective_id=authorization.objective_id,
+        role_id=authorization.role_id,
         evidence_hash=authorization.evidence_hash,
         criteria_results=results,
         criteria_total=authorization.criteria_total,
@@ -1949,6 +1953,7 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         settlement=_settlement_out(settlement, payout_address),
         assigned_agent=assigned_agent,
         workflow=[_role_out(session, r) for r in roles],
+        coordination=_coordination_out(roles),
         feasibility=feasibility,
     )
 
@@ -1973,6 +1978,19 @@ def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
         agent = session.get(AgentIdentity, role.assigned_agent_id)
         if agent is not None:
             assigned_agent = _assigned_agent_out(agent)
+
+    # Per-sub-task "why was this paid?" artifact, when the sub-task validated.
+    authorization = _authorization_out(
+        validation.latest_authorization(session, role.objective_id, role_id=role.id)
+    )
+    # Per-sub-task settlement record, when it settled independently.
+    role_settlement = session.exec(
+        select(Settlement)
+        .where(Settlement.role_id == role.id)
+        .order_by(Settlement.created_at.desc())
+    ).first()
+    settlement_out = _settlement_out(role_settlement, None) if role_settlement else None
+
     return WorkflowRoleOut(
         id=role.id,
         order_index=role.order_index,
@@ -1984,6 +2002,55 @@ def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
         allocation_usdc=role.allocation_usdc,
         status=role.status.value if hasattr(role.status, "value") else str(role.status),
         outcome=role.outcome,
+        depends_on=list(role.depends_on or []),
+        success_criteria=list(role.success_criteria or []),
+        required_evidence_kinds=list(role.required_evidence_kinds or []),
+        required=bool(role.required),
+        validation_status=role.validation_status,
+        settlement_status=role.settlement_status,
+        authorization=authorization,
+        settlement=settlement_out,
+    )
+
+
+def _coordination_out(
+    roles: list[WorkflowRole],
+) -> CoordinationGraphOut | None:
+    """Build the coordination graph view from an objective's sub-tasks."""
+
+    if not roles:
+        return None
+    graph = workflow_domain.coordination_graph(roles)
+    return CoordinationGraphOut(
+        nodes=[
+            CoordinationNodeOut(
+                role_id=n["role_id"],
+                role_key=n["role_key"],
+                title=n["title"],
+                order_index=n["order_index"],
+                wave=n["wave"],
+                depends_on=list(n["depends_on"]),
+                required=n["required"],
+                allocation_usdc=n["allocation_usdc"],
+                assigned_agent_id=n["assigned_agent_id"],
+                validation_status=n["validation_status"],
+                settlement_status=n["settlement_status"],
+                dependency_state=n["dependency_state"],
+                ready=n["ready"],
+            )
+            for n in graph["nodes"]
+        ],
+        edges=[
+            CoordinationEdgeOut(from_role=e["from"], to_role=e["to"])
+            for e in graph["edges"]
+        ],
+        waves=[list(w) for w in graph["waves"]],
+        has_cycle=graph["has_cycle"],
+        cycle_role_ids=list(graph["cycle_role_ids"]),
+        required_total=graph["required_total"],
+        required_passed=graph["required_passed"],
+        required_failed=graph["required_failed"],
+        parent_settleable=graph["parent_settleable"],
     )
 
 
