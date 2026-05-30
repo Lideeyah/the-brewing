@@ -19,8 +19,9 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import get_session
+from app.domain import registry
 from app.models import AgentIdentity, ReputationEvent, User
-from app.schemas import ReputationEventOut, TrustScoreOut
+from app.schemas import ReputationDimension, ReputationEventOut, TrustScoreOut
 
 router = APIRouter(prefix="/trust", tags=["trust"])
 
@@ -40,7 +41,11 @@ def _event_out(ev: ReputationEvent) -> ReputationEventOut:
     )
 
 
-def _trust_out(agent: AgentIdentity, events: list[ReputationEvent]) -> TrustScoreOut:
+def _trust_out(
+    agent: AgentIdentity,
+    events: list[ReputationEvent],
+    dimensions: list[dict],
+) -> TrustScoreOut:
     total = agent.jobs_completed + agent.jobs_failed
     success_rate = (
         round(agent.jobs_completed / total, 4) if total > 0 else None
@@ -64,6 +69,7 @@ def _trust_out(agent: AgentIdentity, events: list[ReputationEvent]) -> TrustScor
         registry_address=agent.registry_address,
         last_outcome_at=last_outcome_at,
         recent_events=[_event_out(e) for e in events],
+        trust_dimensions=[ReputationDimension(**d) for d in dimensions],
     )
 
 
@@ -89,4 +95,5 @@ def get_trust_score(
         .order_by(ReputationEvent.created_at.desc())
         .limit(_RECENT_EVENT_LIMIT)
     ).all()
-    return _trust_out(agent, list(events))
+    dimensions = registry.trust_dimensions(session, agent)
+    return _trust_out(agent, list(events), dimensions)

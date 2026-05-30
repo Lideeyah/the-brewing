@@ -261,8 +261,17 @@ export interface AgentIdentity {
   created_at: string;
 }
 
+export interface ReputationDimension {
+  key: string;
+  label: string;
+  value?: number | null;
+  sample_size: number;
+  hint?: string | null;
+}
+
 export interface AgentDetail extends AgentIdentity {
   reputation_history: ReputationEvent[];
+  trust_dimensions: ReputationDimension[];
 }
 
 export interface TrustScore {
@@ -283,6 +292,7 @@ export interface TrustScore {
   registry_address?: string | null;
   last_outcome_at?: string | null;
   recent_events: ReputationEvent[];
+  trust_dimensions: ReputationDimension[];
 }
 
 export interface OverviewMetric {

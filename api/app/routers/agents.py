@@ -28,6 +28,7 @@ from app.schemas import (
     FeedbackCommitIn,
     FeedbackCommitmentOut,
     FeedbackRevealIn,
+    ReputationDimension,
     ReputationEventOut,
 )
 from app.services import workspace as workspace_service
@@ -159,9 +160,11 @@ def get_agent(
         .order_by(ReputationEvent.created_at.desc())
     ).all()
     base = _agent_out(agent)
+    dimensions = registry.trust_dimensions(session, agent)
     return AgentDetailOut(
         **base.model_dump(),
         reputation_history=[_event_out(e) for e in history],
+        trust_dimensions=[ReputationDimension(**d) for d in dimensions],
     )
 
 

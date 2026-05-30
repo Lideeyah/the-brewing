@@ -24,9 +24,14 @@ from sqlmodel import Session, select
 
 from app.models import (
     AgentIdentity,
+    EscrowState,
     FeedbackCommitment,
     Objective,
+    ObjectiveStatus,
     ReputationEvent,
+    Settlement,
+    SettlementStatus,
+    ValidationRecord,
     WorkflowRole,
 )
 
@@ -324,3 +329,143 @@ def reveal_feedback(
     )
     session.refresh(commitment)
     return commitment
+
+
+def _associated_objective_ids(session: Session, agent: AgentIdentity) -> set[str]:
+    """Every objective the agent contributed to — as executor or via a role."""
+
+    ids: set[str] = set()
+    direct = session.exec(
+        select(Objective.id).where(Objective.agent_id == agent.id)
+    ).all()
+    ids.update(direct)
+    role_objs = session.exec(
+        select(WorkflowRole.objective_id).where(
+            WorkflowRole.assigned_agent_id == agent.id
+        )
+    ).all()
+    ids.update(role_objs)
+    return ids
+
+
+def trust_dimensions(session: Session, agent: AgentIdentity) -> list[dict]:
+    """Decompose an agent's reputation into independent, evidence-backed axes.
+
+    Reputation is more than a single success ratio. Each dimension is computed
+    live from the lifecycle tables for the objectives this agent contributed to,
+    and reports its own sample size so a consumer can weigh thin signals. A
+    dimension with no sample yet returns ``value=None`` rather than a misleading
+    zero.
+    """
+
+    obj_ids = _associated_objective_ids(session, agent)
+    objectives = (
+        session.exec(select(Objective).where(Objective.id.in_(obj_ids))).all()
+        if obj_ids
+        else []
+    )
+
+    # --- Delivery: completed vs. failed outcomes folded into reputation. ---
+    delivered_total = agent.jobs_completed + agent.jobs_failed
+    delivery = (
+        agent.jobs_completed / delivered_total if delivered_total else None
+    )
+
+    # --- Settlement reliability: settled vs. slashed across objectives. ---
+    settled = sum(1 for o in objectives if o.status == ObjectiveStatus.SETTLED)
+    slashed = sum(1 for o in objectives if o.status == ObjectiveStatus.SLASHED)
+    settle_total = settled + slashed
+    settlement_reliability = settled / settle_total if settle_total else None
+
+    # --- Dispute-free rate: share of objectives never disputed. ---
+    disputed = sum(1 for o in objectives if o.status == ObjectiveStatus.DISPUTED)
+    dispute_free = (
+        1 - (disputed / len(objectives)) if objectives else None
+    )
+
+    # --- Validation integrity: independent validations that were upheld. ---
+    upheld = 0
+    reconciled = 0
+    if obj_ids:
+        records = session.exec(
+            select(ValidationRecord).where(
+                ValidationRecord.objective_id.in_(obj_ids),
+                ValidationRecord.upheld != None,  # noqa: E711
+            )
+        ).all()
+        reconciled = len(records)
+        upheld = sum(1 for r in records if r.upheld)
+    validation_integrity = upheld / reconciled if reconciled else None
+
+    # --- SLA compliance: settled within the objective's stated deadline. ---
+    on_time = 0
+    sla_sample = 0
+    for o in objectives:
+        if o.status != ObjectiveStatus.SETTLED:
+            continue
+        try:
+            deadline_hours = float((o.sla_config or {}).get("deadline_hours") or 0)
+        except (TypeError, ValueError):
+            deadline_hours = 0
+        if deadline_hours <= 0:
+            continue
+        escrow = session.exec(
+            select(EscrowState)
+            .where(EscrowState.objective_id == o.id)
+            .order_by(EscrowState.created_at.asc())
+        ).first()
+        settlement = session.exec(
+            select(Settlement)
+            .where(
+                Settlement.objective_id == o.id,
+                Settlement.status == SettlementStatus.SETTLED,
+            )
+            .order_by(Settlement.created_at.desc())
+        ).first()
+        if not escrow or not settlement:
+            continue
+        sla_sample += 1
+        elapsed_hours = (
+            settlement.created_at - escrow.created_at
+        ).total_seconds() / 3600.0
+        if elapsed_hours <= deadline_hours:
+            on_time += 1
+    sla_compliance = on_time / sla_sample if sla_sample else None
+
+    return [
+        {
+            "key": "delivery",
+            "label": "Delivery",
+            "value": delivery,
+            "sample_size": delivered_total,
+            "hint": "Outcomes completed vs. failed.",
+        },
+        {
+            "key": "settlement_reliability",
+            "label": "Settlement reliability",
+            "value": settlement_reliability,
+            "sample_size": settle_total,
+            "hint": "Objectives settled vs. slashed.",
+        },
+        {
+            "key": "validation_integrity",
+            "label": "Validation integrity",
+            "value": validation_integrity,
+            "sample_size": reconciled,
+            "hint": "Independent validations upheld on reconciliation.",
+        },
+        {
+            "key": "dispute_free",
+            "label": "Dispute-free",
+            "value": dispute_free,
+            "sample_size": len(objectives),
+            "hint": "Objectives that were never disputed.",
+        },
+        {
+            "key": "sla_compliance",
+            "label": "SLA compliance",
+            "value": sla_compliance,
+            "sample_size": sla_sample,
+            "hint": "Settled within the objective's deadline.",
+        },
+    ]

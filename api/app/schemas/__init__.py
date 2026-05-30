@@ -344,8 +344,23 @@ class AgentIdentityOut(BaseModel):
     created_at: datetime
 
 
+class ReputationDimension(BaseModel):
+    """One independent axis of an agent's reputation, with its sample size.
+
+    ``value`` is a 0..1 ratio, or null when the agent has no sample for that
+    axis yet — so a thin or absent signal is never shown as a misleading zero.
+    """
+
+    key: str
+    label: str
+    value: float | None = None
+    sample_size: int = 0
+    hint: str | None = None
+
+
 class AgentDetailOut(AgentIdentityOut):
     reputation_history: list[ReputationEventOut] = []
+    trust_dimensions: list[ReputationDimension] = []
 
 
 class FeedbackCommitIn(BaseModel):
@@ -401,6 +416,7 @@ class TrustScoreOut(BaseModel):
     registry_address: str | None = None
     last_outcome_at: datetime | None = None
     recent_events: list[ReputationEventOut] = []
+    trust_dimensions: list["ReputationDimension"] = []
 
 
 class AssignedAgentOut(BaseModel):

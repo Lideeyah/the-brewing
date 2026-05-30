@@ -6,6 +6,7 @@ import { Loader2, Search, ShieldCheck } from "lucide-react";
 import { lookupTrust } from "@/lib/actions";
 import type { TrustScore } from "@/lib/types";
 import { StatusPill } from "@/components/ui/status-pill";
+import { TrustDimensions } from "@/components/app/trust-dimensions";
 
 export function TrustLookup() {
   const [token, setToken] = useState("");
@@ -99,6 +100,15 @@ export function TrustLookup() {
             <Stat label="Completed" value={String(result.jobs_completed)} />
             <Stat label="Failed" value={String(result.jobs_failed)} />
           </div>
+
+          {result.trust_dimensions.length > 0 && (
+            <div className="mt-3 border-t border-border pt-3">
+              <p className="mb-2.5 font-operational text-[11px] uppercase tracking-wider text-muted">
+                Reputation dimensions
+              </p>
+              <TrustDimensions dimensions={result.trust_dimensions} />
+            </div>
+          )}
 
           {result.pricing && (
             <p className="mt-3 font-operational text-[11px] text-muted">
