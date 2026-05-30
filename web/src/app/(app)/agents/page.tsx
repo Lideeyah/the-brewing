@@ -1,4 +1,4 @@
-import { Bot, Wallet } from "lucide-react";
+import { Bot, ShieldCheck, Wallet } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
 import { RegisterAgent } from "@/components/app/register-agent";
@@ -16,9 +16,16 @@ export default async function AgentsPage() {
     agents = [];
   }
 
+  const rated = agents.filter((a) => a.rated);
+  const available = agents.filter((a) => a.availability === "available");
+  const meanTrust =
+    rated.length > 0
+      ? rated.reduce((sum, a) => sum + a.reputation_score, 0) / rated.length
+      : null;
+
   return (
     <>
-      <Topbar title="Agents" breadcrumb="brewing / registry" />
+      <Topbar title="Registry" breadcrumb="brewing / verified registry" />
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
         <div className="mx-auto max-w-5xl space-y-4">
@@ -26,19 +33,54 @@ export default async function AgentsPage() {
           <div className="flex items-start justify-between gap-4">
             <div>
               <h2 className="text-[18px] font-semibold tracking-tight text-foreground">
-                Agent Identity Registry
+                Verified Agent Registry
               </h2>
               <p className="mt-1 max-w-2xl text-[13px] leading-relaxed text-secondary">
-                Every agent carries an on-chain-ready identity token (ERC-8004
-                shaped). Reputation is earned through settled outcomes and bound
-                by blind-signature feedback. Discoverable agents are hireable as
-                objective executors.
+                Trust here is earned, not claimed. Every agent carries an
+                on-chain-ready identity token (ERC-8004 shaped); its standing is
+                folded in from settled outcomes and bound by blind-signature
+                feedback. Verification — a track record of evidence-backed
+                settlements — is what makes an agent hireable, not mere listing.
               </p>
             </div>
             <div className="shrink-0">
               <RegisterAgent />
             </div>
           </div>
+
+          {/* Trust network standing — aggregate across the registry */}
+          {agents.length > 0 && (
+            <Panel>
+              <PanelHeader
+                title="Trust network standing"
+                meta="aggregate · settled-outcome evidence"
+              />
+              <PanelBody>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <NetStat
+                    label="Verified"
+                    value={String(rated.length)}
+                    hint="rated by settled outcomes"
+                  />
+                  <NetStat
+                    label="Network"
+                    value={String(agents.length)}
+                    hint="registered identities"
+                  />
+                  <NetStat
+                    label="Available"
+                    value={String(available.length)}
+                    hint="ready to coordinate"
+                  />
+                  <NetStat
+                    label="Mean trust"
+                    value={meanTrust != null ? meanTrust.toFixed(1) : "—"}
+                    hint="across verified agents"
+                  />
+                </div>
+              </PanelBody>
+            </Panel>
+          )}
 
           {/* Trust lookup */}
           <Panel>
@@ -58,8 +100,9 @@ export default async function AgentsPage() {
                     No agents registered yet
                   </p>
                   <p className="mt-1 max-w-md text-[12px] text-muted">
-                    List your agent to make it discoverable and hireable across
-                    Brewing objectives.
+                    Register an agent identity to start building a verifiable
+                    track record. Trust accrues from settled outcomes — not from
+                    the listing itself.
                   </p>
                 </div>
               </PanelBody>
@@ -87,15 +130,18 @@ function AgentCard({ agent }: { agent: AgentIdentity }) {
               <span className="text-[14px] font-medium text-foreground">
                 {agent.name}
               </span>
+              {agent.rated ? (
+                <span className="inline-flex items-center gap-1">
+                  <ShieldCheck size={13} className="text-success" />
+                  <StatusPill tone="success">verified</StatusPill>
+                </span>
+              ) : (
+                <StatusPill tone="neutral">unverified</StatusPill>
+              )}
               {agent.discoverable && (
                 <StatusPill tone="active" dot={false}>
                   hireable
                 </StatusPill>
-              )}
-              {agent.rated ? (
-                <StatusPill tone="success">rated</StatusPill>
-              ) : (
-                <StatusPill tone="neutral">unrated</StatusPill>
               )}
               <StatusPill
                 tone={
@@ -205,6 +251,26 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="mt-0.5 text-[10px] uppercase tracking-wider text-muted">
         {label}
       </div>
+    </div>
+  );
+}
+
+function NetStat({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint: string;
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-background p-3">
+      <div className="font-operational text-[20px] leading-none text-foreground">
+        {value}
+      </div>
+      <div className="mt-1.5 text-[11px] font-medium text-secondary">{label}</div>
+      <div className="mt-0.5 text-[10px] text-muted">{hint}</div>
     </div>
   );
 }
