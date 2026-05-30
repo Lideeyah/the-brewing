@@ -35,6 +35,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "settlement": {
         "payout_tx_hash": "VARCHAR",
         "fee_basis": "VARCHAR",
+        "role_id": "VARCHAR",
     },
     "objective": {
         "agent_id": "VARCHAR",
@@ -54,6 +55,18 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     },
     "workflowrole": {
         "outcome": "VARCHAR",
+        "depends_on": "JSON NOT NULL DEFAULT '[]'",
+        "success_criteria": "JSON NOT NULL DEFAULT '[]'",
+        "required_evidence_kinds": "JSON NOT NULL DEFAULT '[]'",
+        "required": "BOOLEAN NOT NULL DEFAULT 1",
+        "validation_status": "VARCHAR NOT NULL DEFAULT 'pending'",
+        "settlement_status": "VARCHAR NOT NULL DEFAULT 'pending'",
+    },
+    "validationrecord": {
+        "role_id": "VARCHAR",
+    },
+    "settlementauthorization": {
+        "role_id": "VARCHAR",
     },
 }
 

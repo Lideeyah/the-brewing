@@ -171,13 +171,18 @@ class RoleStatus(str, Enum):
 
 
 class WorkflowRole(SQLModel, table=True):
-    """One role in an objective's multi-agent workflow.
+    """One sub-task (role) in an objective's multi-agent coordination graph.
 
-    An objective decomposes into a workflow of 1..N roles (planner, research,
-    analysis, executor, reviewer, validator, …). Each role is assigned
-    independently to an agent (or, in future, a human), carries its own
-    settlement allocation, and resolves to its own completed/failed outcome —
-    enabling partial settlement and per-role slashing.
+    An objective decomposes into a coordination graph of 1..N sub-tasks
+    (planner, research, analysis, executor, reviewer, validator, …). Each
+    sub-task is assigned independently to an agent (or, in future, a human),
+    carries its own success criteria, evidence requirements, settlement
+    allocation, and dependency edges, and resolves through its **own**
+    validation and settlement — enabling a dependency-ordered execution graph,
+    independent per-sub-task settlement, and per-sub-task slashing.
+
+    The parent objective settles only once every *required* sub-task has passed
+    validation; non-required sub-tasks are advisory and never block the parent.
     """
 
     id: str = Field(default_factory=_id, primary_key=True)
@@ -187,16 +192,34 @@ class WorkflowRole(SQLModel, table=True):
     title: str
     description: str | None = None
 
-    # Independently assignable. Null until an agent is bound to the role.
+    # Independently assignable. Null until an agent is bound to the sub-task.
     assigned_agent_id: str | None = Field(
         default=None, foreign_key="agentidentity.id", index=True
     )
-    # Role-level settlement allocation (exact USDC decimal as string).
+    # Sub-task-level settlement allocation (exact USDC decimal as string).
     allocation_usdc: str = "0"
 
+    # --- Coordination graph & sub-task contract -----------------------------
+    # Ids of the sibling sub-tasks that must pass validation before this one is
+    # *ready* to execute. The edge set defines the objective's dependency DAG;
+    # an empty list means the sub-task has no prerequisites (a graph root).
+    depends_on: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Per-sub-task success criteria (same shape the criteria engine accepts:
+    # list[str] or list[dict]); the sub-task's evidence is judged against these.
+    success_criteria: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Evidence modalities this sub-task must produce (structured_api |
+    # web_navigation | free_text). Empty = modality-agnostic.
+    required_evidence_kinds: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Whether the parent objective's settlement is gated on this sub-task.
+    required: bool = True
+    # Independent validation state for the sub-task: pending | passed | failed.
+    validation_status: str = Field(default="pending", index=True)
+    # Independent settlement state for the sub-task: pending | settled | slashed.
+    settlement_status: str = Field(default="pending", index=True)
+
     status: RoleStatus = Field(default=RoleStatus.PENDING, index=True)
-    # Role-level settlement outcome, set when a settled objective is split
-    # role-by-role: "released" (paid to the assigned agent) or "slashed".
+    # Sub-task-level settlement outcome, set when the sub-task settles:
+    # "released" (paid to the assigned agent) or "slashed".
     outcome: str | None = None
 
     created_at: datetime = Field(default_factory=_now)
@@ -358,6 +381,9 @@ class ValidationRecord(SQLModel, table=True):
 
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
+    # When set, this validation is scoped to a single coordination sub-task
+    # rather than the whole objective — so a sub-task validates independently.
+    role_id: str | None = Field(default=None, foreign_key="workflowrole.id", index=True)
     validator_id: str = Field(foreign_key="validator.id", index=True)
     # Optional link to the advisory Copilot evaluation produced alongside it.
     evaluation_id: str | None = Field(default=None, foreign_key="governanceevaluation.id")
@@ -496,6 +522,9 @@ class SettlementAuthorization(SQLModel, table=True):
 
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
+    # When set, the authorization justifies settling a single coordination
+    # sub-task; null means it authorizes the parent objective as a whole.
+    role_id: str | None = Field(default=None, foreign_key="workflowrole.id", index=True)
 
     # Tamper-evident binding to the exact evidence reasoned over. Matches the
     # ValidationRecord's hash when the underlying evidence is unchanged, proving
@@ -528,6 +557,9 @@ class SettlementAuthorization(SQLModel, table=True):
 class Settlement(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
+    # When set, this is an independent settlement of a single coordination
+    # sub-task (its allocation), not the parent objective's settlement.
+    role_id: str | None = Field(default=None, foreign_key="workflowrole.id", index=True)
     status: SettlementStatus = SettlementStatus.PENDING
     amount_usdc: str = "0"
     fee_usdc: str = "0"  # hybrid volume fee (tiered, $0.001 micro-fee floor)
