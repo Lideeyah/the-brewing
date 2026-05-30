@@ -140,6 +140,47 @@ export async function assignAgent(
   }
 }
 
+/** Result shape for binding an agent to a workflow role. */
+export type AssignRoleResult =
+  | { ok: true }
+  | { ok: false; message: string; issues?: string[] };
+
+/**
+ * Workflow: bind a registered agent to one role in an objective's workflow.
+ * The API enforces the agent's pricing/availability constraints, so a
+ * constraint violation comes back as a list of human-readable issues the UI
+ * can surface inline rather than a generic failure.
+ */
+export async function assignRole(
+  objectiveId: string,
+  roleId: string,
+  agentId: string,
+): Promise<AssignRoleResult> {
+  try {
+    await apiPost<ObjectiveDetail>(
+      `/objectives/${objectiveId}/roles/${roleId}/assign`,
+      { agent_id: agentId },
+    );
+    revalidatePath(`/objectives/${objectiveId}`);
+    return { ok: true };
+  } catch (err) {
+    if (err instanceof ApiError) {
+      const detail = (err.body as { detail?: unknown } | undefined)?.detail;
+      if (detail && typeof detail === "object" && "issues" in detail) {
+        const issues = (detail as { issues?: unknown }).issues;
+        if (Array.isArray(issues)) {
+          return {
+            ok: false,
+            message: "That agent can't take this role.",
+            issues: issues.map(String),
+          };
+        }
+      }
+    }
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
 /** Result shape for agent self-registration. */
 export type RegisterAgentResult =
   | { ok: true; agent: AgentIdentity }

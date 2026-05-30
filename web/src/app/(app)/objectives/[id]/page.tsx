@@ -18,6 +18,7 @@ import { LockEscrowButton } from "@/components/app/lock-escrow-button";
 import { LifecycleActions } from "@/components/app/lifecycle-actions";
 import { NonCustodialNote } from "@/components/app/non-custodial-note";
 import { AssignAgent } from "@/components/app/assign-agent";
+import { WorkflowPanel } from "@/components/app/workflow-panel";
 import { ApiError, apiGet } from "@/lib/api";
 import type { AgentIdentity, ObjectiveDetail } from "@/lib/types";
 import { STATUS_META, eventTone, formatTime, objRef } from "@/lib/objective-ui";
@@ -271,6 +272,16 @@ export default async function ObjectiveDetailPage({
                 )}
               </PanelBody>
             </Panel>
+          )}
+
+          {!isDraft && (
+            <WorkflowPanel
+              objectiveId={obj.id}
+              roles={obj.workflow}
+              feasibility={obj.feasibility}
+              agents={agents}
+              locked={settled}
+            />
           )}
 
           {isDraft ? (

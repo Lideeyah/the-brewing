@@ -160,6 +160,42 @@ export interface AssignedAgent {
   success_rate?: number | null;
 }
 
+export type RoleStatus = "pending" | "assigned" | "completed" | "failed";
+
+export interface WorkflowRole {
+  id: string;
+  order_index: number;
+  role_key: string;
+  title: string;
+  description?: string | null;
+  assigned_agent_id?: string | null;
+  assigned_agent?: AssignedAgent | null;
+  allocation_usdc: string;
+  status: RoleStatus;
+}
+
+export interface FeasibilityRoleCheck {
+  role_id: string;
+  role_key: string;
+  title: string;
+  allocation_usdc: string;
+  assigned_agent_id?: string | null;
+  assigned_agent_name?: string | null;
+  ok: boolean;
+  issues: string[];
+}
+
+export interface FeasibilityReport {
+  feasible: boolean;
+  budget_usdc: string;
+  required_usdc: string;
+  shortfall_usdc: string;
+  over_budget: boolean;
+  blocking_roles: number;
+  role_checks: FeasibilityRoleCheck[];
+  recommendations: string[];
+}
+
 export interface ObjectiveDetail extends Objective {
   governance_config: Record<string, unknown>;
   sla_config: Record<string, unknown>;
@@ -177,6 +213,8 @@ export interface ObjectiveDetail extends Objective {
   audit?: AuditReview | null;
   settlement?: Settlement | null;
   assigned_agent?: AssignedAgent | null;
+  workflow: WorkflowRole[];
+  feasibility?: FeasibilityReport | null;
 }
 
 export interface ServiceEndpoint {
@@ -210,6 +248,11 @@ export interface AgentIdentity {
   jobs_failed: number;
   rated: boolean;
   success_rate?: number | null;
+  pricing_model: string;
+  min_objective_value_usdc?: string | null;
+  min_role_compensation_usdc?: string | null;
+  availability: string;
+  max_concurrent: number;
   metadata_uri?: string | null;
   registry_chain?: string | null;
   registry_address?: string | null;
