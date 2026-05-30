@@ -44,6 +44,7 @@ from app.models import (
 )
 from app.schemas import (
     AssignAgentIn,
+    AssignedAgentOut,
     AuditDecision,
     AuditReviewOut,
     EscrowOut,
@@ -986,6 +987,11 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         session.refresh(obj)
 
     treasury = workspace_service.get_treasury(session, obj.workspace_id)
+    assigned_agent = None
+    if obj.agent_id:
+        agent = session.get(AgentIdentity, obj.agent_id)
+        if agent is not None:
+            assigned_agent = _assigned_agent_out(agent)
     base = _objective_out(obj)
     return ObjectiveDetailOut(
         **base.model_dump(),
@@ -1000,4 +1006,19 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         evaluation=_evaluation_out(evaluation),
         audit=_audit_out(review),
         settlement=_settlement_out(settlement, payout_address),
+        assigned_agent=assigned_agent,
+    )
+
+
+def _assigned_agent_out(agent: AgentIdentity) -> AssignedAgentOut:
+    total = agent.jobs_completed + agent.jobs_failed
+    return AssignedAgentOut(
+        id=agent.id,
+        token_id=agent.token_id,
+        name=agent.name,
+        reputation_score=agent.reputation_score,
+        jobs_completed=agent.jobs_completed,
+        jobs_failed=agent.jobs_failed,
+        rated=total > 0,
+        success_rate=round(agent.jobs_completed / total, 4) if total > 0 else None,
     )

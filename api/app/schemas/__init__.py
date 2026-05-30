@@ -175,6 +175,7 @@ class ObjectiveDetailOut(ObjectiveOut):
     evaluation: GovernanceEvaluationOut | None = None
     audit: AuditReviewOut | None = None
     settlement: SettlementOut | None = None
+    assigned_agent: "AssignedAgentOut | None" = None
 
 
 # --- Agent identity registry ------------------------------------------------
@@ -189,8 +190,11 @@ class ServiceEndpoint(BaseModel):
 class AgentRegisterIn(BaseModel):
     name: str
     owner: str  # agentic-wallet address / controlling account
+    description: str | None = None
     capabilities: list[str] = []
     service_endpoints: list[ServiceEndpoint] = []
+    pricing: str | None = None  # free-text, e.g. "0.05 USDC / call"
+    discoverable: bool = True
     metadata_uri: str | None = None
 
 
@@ -209,12 +213,16 @@ class AgentIdentityOut(BaseModel):
     token_id: str  # on-chain-ready identity token (ERC-8004 agentId)
     owner: str
     name: str
+    description: str | None = None
     capabilities: list[str]
     service_endpoints: list[dict]
+    pricing: str | None = None
+    discoverable: bool = True
     reputation_score: float
     jobs_completed: int
     jobs_failed: int
     rated: bool  # false until the agent has at least one outcome
+    success_rate: float | None = None  # null until the agent has any outcome
     metadata_uri: str | None = None
     registry_chain: str | None = None
     registry_address: str | None = None
@@ -265,6 +273,8 @@ class TrustScoreOut(BaseModel):
     token_id: str
     name: str
     owner: str
+    description: str | None = None
+    pricing: str | None = None
     reputation_score: float
     jobs_completed: int
     jobs_failed: int
@@ -277,6 +287,23 @@ class TrustScoreOut(BaseModel):
     registry_address: str | None = None
     last_outcome_at: datetime | None = None
     recent_events: list[ReputationEventOut] = []
+
+
+class AssignedAgentOut(BaseModel):
+    """Compact agent reference embedded on an objective once assigned.
+
+    Carries the live reputation read so the objective page reflects the trust
+    score moving the moment a settlement folds the outcome back in.
+    """
+
+    id: str
+    token_id: str
+    name: str
+    reputation_score: float
+    jobs_completed: int
+    jobs_failed: int
+    rated: bool
+    success_rate: float | None = None
 
 
 # --- KPI analytics ----------------------------------------------------------

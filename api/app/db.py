@@ -39,6 +39,11 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "objective": {
         "agent_id": "VARCHAR",
     },
+    "agentidentity": {
+        "description": "VARCHAR",
+        "pricing": "VARCHAR",
+        "discoverable": "BOOLEAN NOT NULL DEFAULT 1",
+    },
     "workspace": {
         "subscription_tier": "VARCHAR NOT NULL DEFAULT 'free'",
     },

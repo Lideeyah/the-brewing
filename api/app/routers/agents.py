@@ -43,17 +43,22 @@ def current_workspace(
 
 
 def _agent_out(agent: AgentIdentity) -> AgentIdentityOut:
+    total = agent.jobs_completed + agent.jobs_failed
     return AgentIdentityOut(
         id=agent.id,
         token_id=agent.token_id,
         owner=agent.owner,
         name=agent.name,
+        description=agent.description,
         capabilities=list(agent.capabilities or []),
         service_endpoints=list(agent.service_endpoints or []),
+        pricing=agent.pricing,
+        discoverable=agent.discoverable,
         reputation_score=agent.reputation_score,
         jobs_completed=agent.jobs_completed,
         jobs_failed=agent.jobs_failed,
-        rated=(agent.jobs_completed + agent.jobs_failed) > 0,
+        rated=total > 0,
+        success_rate=round(agent.jobs_completed / total, 4) if total > 0 else None,
         metadata_uri=agent.metadata_uri,
         registry_chain=agent.registry_chain,
         registry_address=agent.registry_address,
@@ -108,8 +113,11 @@ def register_agent(
         workspace_id=workspace.id,
         owner=body.owner,
         name=body.name,
+        description=body.description,
         capabilities=body.capabilities,
         service_endpoints=[e.model_dump() for e in body.service_endpoints],
+        pricing=body.pricing,
+        discoverable=body.discoverable,
         metadata_uri=body.metadata_uri,
     )
     return _agent_out(agent)

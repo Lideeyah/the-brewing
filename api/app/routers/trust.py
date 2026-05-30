@@ -50,6 +50,8 @@ def _trust_out(agent: AgentIdentity, events: list[ReputationEvent]) -> TrustScor
         token_id=agent.token_id,
         name=agent.name,
         owner=agent.owner,
+        description=agent.description,
+        pricing=agent.pricing,
         reputation_score=agent.reputation_score,
         jobs_completed=agent.jobs_completed,
         jobs_failed=agent.jobs_failed,

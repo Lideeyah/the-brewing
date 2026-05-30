@@ -273,8 +273,13 @@ class AgentIdentity(SQLModel, table=True):
     token_id: str = Field(index=True, unique=True)
     owner: str  # owner / agentic-wallet address holding signing authority
     name: str
+    description: str | None = None  # what the agent does (marketplace listing)
     capabilities: list = Field(default_factory=list, sa_column=Column(JSON))
     service_endpoints: list = Field(default_factory=list, sa_column=Column(JSON))
+    # Free-text pricing the developer advertises, e.g. "0.05 USDC / call".
+    pricing: str | None = None
+    # Whether the agent is listed as discoverable + hireable in the marketplace.
+    discoverable: bool = Field(default=True, index=True)
 
     # Reputation read cache (authoritative history is ReputationEvent).
     reputation_score: float = 0.0  # 0..100; jobs_total == 0 means "unrated"

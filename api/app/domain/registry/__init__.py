@@ -57,6 +57,9 @@ def register_agent(
     capabilities: list[str],
     service_endpoints: list[dict],
     metadata_uri: str | None = None,
+    description: str | None = None,
+    pricing: str | None = None,
+    discoverable: bool = True,
 ) -> AgentIdentity:
     """Mint a new agent identity token within a workspace."""
 
@@ -76,8 +79,11 @@ def register_agent(
         token_id=token_id,
         owner=owner,
         name=name,
+        description=description,
         capabilities=list(capabilities or []),
         service_endpoints=list(service_endpoints or []),
+        pricing=pricing,
+        discoverable=discoverable,
         metadata_uri=metadata_uri,
         signing_secret=signing_secret,
         signing_pubkey=signing_pubkey,
