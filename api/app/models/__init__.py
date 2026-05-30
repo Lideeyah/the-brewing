@@ -147,6 +147,10 @@ class Objective(SQLModel, table=True):
     status: ObjectiveStatus = Field(default=ObjectiveStatus.DRAFT, index=True)
     summary: str | None = None
 
+    # The agent identity executing this objective. When set, settlement
+    # outcomes auto-update the agent's reputation in the registry.
+    agent_id: str | None = Field(default=None, foreign_key="agentidentity.id", index=True)
+
     # Coordination architecture produced by the Copilot (provider-agnostic blobs).
     governance_config: dict = Field(default_factory=dict, sa_column=Column(JSON))
     sla_config: dict = Field(default_factory=dict, sa_column=Column(JSON))

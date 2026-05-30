@@ -25,6 +25,7 @@ from sqlmodel import Session, select
 from app.models import (
     AgentIdentity,
     FeedbackCommitment,
+    Objective,
     ReputationEvent,
 )
 
@@ -180,6 +181,64 @@ def record_outcome(
     session.commit()
     session.refresh(event)
     return event
+
+
+def record_settlement_outcome(
+    session: Session, *, objective: Objective, success: bool
+) -> list[AgentIdentity]:
+    """Wire a settlement outcome back into the agent registry automatically.
+
+    Called when an objective settles (success) or is slashed (failure). It:
+      1. Auto-reveals any pending blind-signature commitments for the objective
+         with the real outcome — closing the sign-before-reveal loop so a
+         committed agent's reputation moves whether the result is good or bad.
+      2. If the objective has an assigned agent that had no commitment, records
+         the outcome directly.
+
+    Returns the agent identities whose reputation was updated. Never raises on a
+    missing/unregistered agent — settlement must not be blocked by the registry.
+    """
+
+    affected: list[AgentIdentity] = []
+    revealed_agent_ids: set[str] = set()
+
+    pending = session.exec(
+        select(FeedbackCommitment).where(
+            FeedbackCommitment.objective_id == objective.id,
+            FeedbackCommitment.revealed == False,  # noqa: E712
+        )
+    ).all()
+    for commitment in pending:
+        agent = session.get(AgentIdentity, commitment.agent_id)
+        if agent is None:
+            continue
+        try:
+            reveal_feedback(
+                session,
+                agent=agent,
+                commitment=commitment,
+                success=success,
+                note="auto-revealed on settlement",
+            )
+        except ValueError:
+            # Signature failed to verify — skip rather than block settlement.
+            continue
+        revealed_agent_ids.add(agent.id)
+        affected.append(agent)
+
+    if objective.agent_id and objective.agent_id not in revealed_agent_ids:
+        agent = session.get(AgentIdentity, objective.agent_id)
+        if agent is not None:
+            record_outcome(
+                session,
+                agent=agent,
+                objective_id=objective.id,
+                success=success,
+                note="settlement outcome",
+            )
+            affected.append(agent)
+
+    return affected
 
 
 def reveal_feedback(

@@ -83,6 +83,7 @@ class ObjectiveOut(BaseModel):
     status: ObjectiveStatus
     summary: str | None = None
     escrow_amount_usdc: str
+    agent_id: str | None = None  # assigned agent identity (reputation feedback loop)
     created_at: datetime
     updated_at: datetime
 
@@ -245,6 +246,37 @@ class FeedbackRevealIn(BaseModel):
     commitment_id: str
     success: bool
     note: str | None = None
+
+
+class AssignAgentIn(BaseModel):
+    agent_id: str  # AgentIdentity.id to assign as the objective's executor
+
+
+# --- Trust API --------------------------------------------------------------
+
+
+class TrustScoreOut(BaseModel):
+    """Queryable reputation snapshot for any registered agent.
+
+    Keyed by the on-chain-ready identity token so a counterparty can look up
+    trust before transacting, without needing workspace credentials.
+    """
+
+    token_id: str
+    name: str
+    owner: str
+    reputation_score: float
+    jobs_completed: int
+    jobs_failed: int
+    total_jobs: int
+    success_rate: float | None = None  # null until the agent has any outcome
+    rated: bool
+    capabilities: list[str] = []
+    service_endpoints: list[dict] = []
+    registry_chain: str | None = None
+    registry_address: str | None = None
+    last_outcome_at: datetime | None = None
+    recent_events: list[ReputationEventOut] = []
 
 
 # --- Dashboard --------------------------------------------------------------

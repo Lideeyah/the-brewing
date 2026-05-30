@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.db import init_db
-from app.routers import agents, auth, health, objectives, workspaces
+from app.routers import agents, auth, health, objectives, trust, workspaces
 
 settings = get_settings()
 
@@ -36,6 +36,7 @@ app.include_router(auth.router)
 app.include_router(objectives.router)
 app.include_router(workspaces.router)
 app.include_router(agents.router)
+app.include_router(trust.router)
 
 
 @app.get("/")

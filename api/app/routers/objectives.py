@@ -9,6 +9,7 @@ the caller's own workspace.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -17,12 +18,13 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.domain import copilot, oracle
+from app.domain import copilot, oracle, registry
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
 from app.domain.settlement.circle_provider import SettlementConfigError
 from app.domain.settlement.provider import EscrowRef, WalletRef
 from app.models import (
+    AgentIdentity,
     AuditReview,
     AuditStatus,
     EscrowState,
@@ -41,6 +43,7 @@ from app.models import (
     Workspace,
 )
 from app.schemas import (
+    AssignAgentIn,
     AuditDecision,
     AuditReviewOut,
     EscrowOut,
@@ -59,6 +62,8 @@ from app.schemas import (
 _USDC_QUANT = Decimal("0.000001")
 from app.domain.settlement.fees import quote_settlement_fee
 from app.services import workspace as workspace_service
+
+logger = logging.getLogger("brewing.objectives")
 
 router = APIRouter(prefix="/objectives", tags=["objectives"])
 
@@ -79,6 +84,7 @@ def _objective_out(obj: Objective) -> ObjectiveOut:
         status=obj.status,
         summary=obj.summary,
         escrow_amount_usdc=obj.escrow_amount_usdc,
+        agent_id=obj.agent_id,
         created_at=obj.created_at,
         updated_at=obj.updated_at,
     )
@@ -161,6 +167,41 @@ def get_objective(
     session: Session = Depends(get_session),
 ) -> ObjectiveDetailOut:
     obj = _get_owned_objective(session, workspace, objective_id)
+    return _detail(session, obj)
+
+
+@router.post("/{objective_id}/assign-agent", response_model=ObjectiveDetailOut)
+def assign_agent(
+    objective_id: str,
+    body: AssignAgentIn,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    """Assign a registered agent identity as the objective's executor.
+
+    The assignment is what lets the reputation feedback loop attribute a
+    settlement outcome to an agent automatically at settle time.
+    """
+    obj = _get_owned_objective(session, workspace, objective_id)
+    agent = session.get(AgentIdentity, body.agent_id)
+    if agent is None or agent.workspace_id != workspace.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
+        )
+    obj.agent_id = agent.id
+    obj.updated_at = datetime.now(timezone.utc)
+    session.add(obj)
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="agent.assigned",
+        message=f"Assigned agent {agent.name} ({agent.token_id}) as executor.",
+        actor=user.id,
+        data={"agent_id": agent.id, "token_id": agent.token_id},
+    )
+    session.commit()
+    session.refresh(obj)
     return _detail(session, obj)
 
 
@@ -695,6 +736,42 @@ def settle_objective(
     except SettlementConfigError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
+        )
+
+    # Reputation feedback loop: fold the settlement outcome back into the agent
+    # identity registry automatically. Auto-reveals any pre-committed blind
+    # feedback for this objective and records the outcome for the assigned
+    # agent. Never blocks settlement on a registry miss.
+    try:
+        affected_agents = registry.record_settlement_outcome(
+            session, objective=obj, success=approved
+        )
+    except Exception as exc:  # noqa: BLE001 — registry must never block settlement
+        logger.warning("Reputation wiring skipped after settlement: %s", exc)
+        affected_agents = []
+
+    if affected_agents:
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="reputation.updated",
+            message=(
+                f"Reputation updated for {len(affected_agents)} agent(s) after "
+                f"{'successful settlement' if approved else 'slash'}."
+            ),
+            actor=user.id,
+            data={
+                "success": approved,
+                "agents": [
+                    {
+                        "token_id": a.token_id,
+                        "reputation_score": a.reputation_score,
+                        "jobs_completed": a.jobs_completed,
+                        "jobs_failed": a.jobs_failed,
+                    }
+                    for a in affected_agents
+                ],
+            },
         )
 
     obj.updated_at = datetime.now(timezone.utc)

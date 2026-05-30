@@ -36,6 +36,9 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "payout_tx_hash": "VARCHAR",
         "fee_basis": "VARCHAR",
     },
+    "objective": {
+        "agent_id": "VARCHAR",
+    },
     "workspace": {
         "subscription_tier": "VARCHAR NOT NULL DEFAULT 'free'",
     },
