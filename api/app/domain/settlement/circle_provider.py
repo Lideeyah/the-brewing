@@ -8,6 +8,7 @@ is a later upgrade and does not change this interface.
 
 from __future__ import annotations
 
+import json
 import uuid
 from decimal import Decimal
 
@@ -96,6 +97,14 @@ class CircleSettlementProvider(SettlementProvider):
         client = self._client_or_raise()
         dcw = self._dcw
         api = dcw.TransactionsApi(client)
+        # Circle requires `blockchain` whenever the token is identified by its
+        # on-chain address (tokenAddress + blockchain) rather than Circle's
+        # internal tokenId. The current SDK types this field as a strict
+        # discriminated wrapper, so the raw config string ("SOL-DEVNET") fails
+        # validation — it must be built into the typed model first.
+        chain = dcw.CreateTransferTransactionForDeveloperRequestBlockchain.from_json(
+            json.dumps(self.settings.circle_blockchain)
+        )
         resp = api.create_developer_transaction_transfer(
             dcw.CreateTransferTransactionForDeveloperRequest(
                 idempotency_key=str(uuid.uuid4()),
@@ -103,7 +112,7 @@ class CircleSettlementProvider(SettlementProvider):
                 destination_address=destination_address,
                 amounts=[str(amount)],
                 token_address=USDC_SOL_DEVNET_MINT,
-                blockchain=self.settings.circle_blockchain,
+                blockchain=chain,
                 fee_level="MEDIUM",
                 ref_id=ref_id,
             )
