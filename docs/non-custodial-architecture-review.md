@@ -1,7 +1,7 @@
 # Non-Custodial Architecture Review
 
 **Status:** Review — assessment and recommendation only. No implementation is proposed for merge as part of this document.
-**Scope:** Brewing settlement, escrow, and treasury custody on Arc (EVM L1) via the provider abstraction.
+**Scope:** Brewing settlement, escrow, and treasury custody on Solana devnet (via Circle Developer-Controlled Wallets) behind the provider abstraction.
 **Audience:** Architecture / governance review.
 
 ---
@@ -44,7 +44,7 @@ The abstraction is non-custodial-ready; the **only wired implementation is custo
 
 The missing pieces to close the gap are:
 
-1. A concrete `NonCustodialSettlementProvider` implementation that deploys a per-objective escrow contract (Vyper `AgentEscrow.vy` is the natural home) whose `owner`/controller is the tenant's agentic wallet, not a Brewing-held key.
+1. A concrete `NonCustodialSettlementProvider` implementation that provisions a per-objective escrow account on Solana whose signing authority is the tenant's own (agentic) wallet, not a Brewing-/Circle-held key. Today Circle DCW holds the keys; the non-custodial variant must hand custody to the tenant — either a tenant-owned account with a governance-gated release path or a lightweight on-chain escrow program the tenant controls.
 2. A **governance-authorizes, controller-executes** flow: Brewing's governance decision produces a signed *authorization* (release vs. slash with amounts/allocations), and the controller wallet — driven by the tenant's agent — submits the on-chain transaction. Brewing's signature is necessary for governance but **not sufficient** to move funds.
 3. Settlement allocation (the Phase 3 role-level release/slash split) must be expressed as on-chain instructions the controller can verify before signing, so partial settlement remains trust-minimized.
 
@@ -58,9 +58,9 @@ The missing pieces to close the gap are:
 
 A three-stage migration, each independently shippable, none requiring a rewrite of governance/orchestration (they already sit behind the provider seam):
 
-1. **Stage A — Contract.** Extend `AgentEscrow.vy` so a per-objective escrow can be deployed with `controller = tenant agentic wallet` and a separate `governance` role held by Brewing. Encode release/slash as controller-submitted txs gated by a governance authorization (or governance veto + timelock). Write titanoboa tests first, per project mandate.
-2. **Stage B — Provider.** Implement a concrete `NonCustodialSettlementProvider` against that contract. Because the domain already depends only on the ABC, escrow/governance/settlement code should need **no changes** beyond provider selection.
-3. **Stage C — Default flip.** Make non-custodial the default custody model for new objectives; keep custodial available as an explicit fallback for tenants without an agentic wallet. The UI already renders both postures correctly.
+1. **Stage A — Custody construction.** Define the on-chain escrow position whose signing authority is the tenant's wallet and whose release/slash is gated by a Brewing-held governance role — e.g. a tenant-owned account with a governance co-sign, or a small Solana escrow program with `controller` + `governance` roles and a timelock/veto. Land it behind tests before wiring.
+2. **Stage B — Provider.** Implement a concrete `NonCustodialSettlementProvider` against that construction. Because the domain already depends only on the ABC, escrow/governance/settlement code should need **no changes** beyond provider selection.
+3. **Stage C — Default flip.** Make non-custodial the default custody model for new objectives; keep custodial (Circle DCW) available as an explicit fallback for tenants without a self-custodied wallet. The UI already renders both postures correctly.
 
 **No code change is recommended by this document itself.** The architecture is correctly factored to absorb this migration without disturbing governance, validation, or orchestration. The work is additive (a new provider + contract surface), and the honesty of the current custody messaging means no claims need to be walked back as the migration lands.
 

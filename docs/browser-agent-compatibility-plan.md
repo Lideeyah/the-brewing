@@ -1,7 +1,7 @@
 # Browser-Agent Compatibility Plan
 
 **Status:** Planning — design and sequencing only. No implementation is proposed for merge as part of this document.
-**Scope:** How browser-driven agents (Playwright / Claude-in-Chrome–style executors that act on live web UIs) participate in Brewing as first-class, governed, verifiable coordination participants.
+**Scope:** How browser-driven agents (headless-browser or Claude-in-Chrome–style executors that act on live web UIs) participate in Brewing as first-class, governed, verifiable coordination participants. Note: no browser-automation tooling is part of the stack today; this scopes how one would integrate.
 **Audience:** Architecture / governance review.
 
 ---
@@ -24,7 +24,7 @@ Browser agents do **not** need a new identity or governance model. They reuse:
 - **Workflow roles.** A browser agent fills a role (`executor`, `research`) in a multi-agent workflow and is assigned subject to the same Phase 3 constraints (min role compensation, availability, capacity).
 - **Independent validation.** This is the keystone. Brewing already mandates that validation is performed by an **identity distinct from the executor** and is **bound to a hash of the exact evidence reviewed**. Browser agents make this principle *more* important, not less — the executor must never validate its own browser run.
 - **SLA oracle for unstructured outputs.** Browser results are inherently unstructured; the SLA oracle path already exists to assess unstructured deliverables against criteria, and is the natural evaluator for "did the browser task actually meet the objective."
-- **Rate-limiting pacemaker.** Per project mandate, all downstream Claude/Playwright calls run under an `asyncio.Lock()` with a 3.5s delay to avoid 429s. Browser agents are the primary consumer of this discipline; it must be enforced on every browser action, not just LLM calls.
+- **Rate-limiting pacemaker.** Brewing already serializes downstream Claude calls behind a 3.5s `asyncio.Lock` pacemaker (`orchestration_pacemaker_seconds`, see `domain/copilot`) to avoid 429s. A browser harness would extend the same discipline to every browser/model action, not just the existing Copilot calls.
 
 ## 3. What is new: the evidence envelope
 
@@ -70,7 +70,7 @@ Browser agents act with real credentials, so the coordination contract must boun
 - **Capability scoping.** Registry capabilities (`web.checkout`, `web.scrape`, …) gate which roles an agent may be assigned. A scrape-only agent must not be assignable to a checkout role.
 - **Allowlist / target constraints.** A role definition should carry an allowed-origin set; actions outside it are rejected at the harness, not trusted to the agent.
 - **Credential isolation.** Credentials used by a browser agent are tenant-scoped and never enter Brewing's governance records — only redacted network summaries do. This dovetails with the non-custodial direction: Brewing observes and governs, it does not hold the tenant's secrets.
-- **Pacemaker enforcement.** The 3.5s-locked pacemaker is a hard requirement on the browser harness; `pacemaker_log` in the evidence envelope makes adherence auditable and can itself be a validation finding.
+- **Pacemaker enforcement.** The existing 3.5s pacemaker lock would be extended to the browser harness; `pacemaker_log` in the evidence envelope makes adherence auditable and can itself be a validation finding.
 - **Kill-switch via SLA.** A browser run that exceeds `sla_config.deadline_hours` or stalls is slashable through the existing SLA/slash path — no new enforcement primitive needed.
 
 ## 6. Sequencing (when this is built)
