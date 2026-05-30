@@ -193,6 +193,47 @@ class ValidationRecordOut(BaseModel):
     validator: ValidatorOut | None = None
 
 
+class CriterionBasisOut(BaseModel):
+    """One evidence step that supports a satisfied criterion."""
+
+    step_index: int | None = None
+    step_title: str | None = None
+    output_kind: str | None = None
+    quality: str | None = None
+    matched_terms: list[str] = []
+
+
+class CriterionResultOut(BaseModel):
+    """The verdict for one success criterion against the recorded evidence."""
+
+    key: str
+    description: str
+    required_evidence_kind: str | None = None
+    satisfied: bool | None = None  # True | False | None (indeterminate)
+    confidence: float = 0.0
+    rationale: str = ""
+    basis: list[CriterionBasisOut] = []
+
+
+class SettlementAuthorizationOut(BaseModel):
+    """Evidence-grounded authorization answering "why was this agent paid?"."""
+
+    id: str
+    objective_id: str
+    evidence_hash: str
+    criteria_results: list[CriterionResultOut] = []
+    criteria_total: int = 0
+    criteria_satisfied: int = 0
+    criteria_failed: int = 0
+    criteria_indeterminate: int = 0
+    evidence_verdict: str  # approved | approved_with_conditions | rejected
+    headline: str = ""
+    governance_approved: bool | None = None
+    aligned_with_evidence: bool | None = None
+    authorized: bool | None = None
+    created_at: datetime
+
+
 class SettlementOut(BaseModel):
     id: str
     status: str
@@ -275,6 +316,7 @@ class ObjectiveDetailOut(ObjectiveOut):
     evaluation: GovernanceEvaluationOut | None = None
     validation: "ValidationRecordOut | None" = None
     audit: AuditReviewOut | None = None
+    authorization: "SettlementAuthorizationOut | None" = None
     settlement: SettlementOut | None = None
     assigned_agent: "AssignedAgentOut | None" = None
     workflow: list["WorkflowRoleOut"] = []

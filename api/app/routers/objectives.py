@@ -38,6 +38,7 @@ from app.models import (
     ObjectiveStatus,
     RunStatus,
     Settlement,
+    SettlementAuthorization,
     SettlementStatus,
     StepStatus,
     User,
@@ -48,6 +49,8 @@ from app.schemas import (
     AssignedAgentOut,
     AuditDecision,
     AuditReviewOut,
+    CriterionBasisOut,
+    CriterionResultOut,
     EscrowOut,
     ExecutionRunOut,
     ExecutionStepOut,
@@ -60,6 +63,7 @@ from app.schemas import (
     ObjectiveCreate,
     ObjectiveDetailOut,
     ObjectiveOut,
+    SettlementAuthorizationOut,
     SettlementOut,
     UpdateAllocationIn,
     ValidationFinding,
@@ -591,6 +595,41 @@ def _latest_evaluation(
     ).first()
 
 
+def _objective_evidence(session: Session, obj: Objective) -> list[dict]:
+    """Rebuild the normalized evidence dicts for an objective from its steps.
+
+    Deterministic: the same step inputs yield the same evidence and therefore
+    the same ``evidence_hash`` the independent validator bound at evaluation
+    time. This lets the settlement authorization re-derive criterion
+    satisfaction from the exact evidence that was validated.
+    """
+
+    run = session.exec(
+        select(ExecutionRun)
+        .where(ExecutionRun.objective_id == obj.id)
+        .order_by(ExecutionRun.created_at.desc())
+    ).first()
+    steps = (
+        session.exec(
+            select(ExecutionStep)
+            .where(ExecutionStep.run_id == run.id)
+            .order_by(ExecutionStep.index.asc())
+        ).all()
+        if run
+        else []
+    )
+    step_dicts = [
+        {
+            "index": s.index,
+            "title": s.title,
+            "status": s.status.value,
+            "output": s.output,
+        }
+        for s in steps
+    ]
+    return [e.to_dict() for e in oracle.build_evidence(step_dicts)]
+
+
 @router.post("/{objective_id}/audit/evaluate", response_model=ObjectiveDetailOut)
 async def evaluate_governance_route(
     objective_id: str,
@@ -815,6 +854,46 @@ def decide_audit(
             },
         )
 
+    # Settlement authorization: bind the human decision to the deterministic
+    # per-criterion evidence verdict so the objective carries an auditable
+    # "why was this authorized?" artifact, hashed to the validated evidence.
+    # Never blocks the decision on an authorization miss.
+    try:
+        evidence_dicts = _objective_evidence(session, obj)
+        authorization = validation.record_authorization(
+            session,
+            objective_id=obj.id,
+            raw_criteria=list(criteria),
+            evidence=evidence_dicts,
+            approved=approved,
+        )
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="settlement.authorized" if approved else "settlement.denied",
+            message=(
+                f"Settlement authorization recorded: {authorization.criteria_satisfied}"
+                f"/{authorization.criteria_total} criteria satisfied by evidence "
+                f"(evidence verdict '{authorization.evidence_verdict}', "
+                f"{'aligned with' if authorization.aligned_with_evidence else 'overrides'} "
+                "the human decision)."
+            ),
+            actor="settlement-authorizer",
+            data={
+                "authorization_id": authorization.id,
+                "evidence_verdict": authorization.evidence_verdict,
+                "criteria_satisfied": authorization.criteria_satisfied,
+                "criteria_total": authorization.criteria_total,
+                "criteria_failed": authorization.criteria_failed,
+                "criteria_indeterminate": authorization.criteria_indeterminate,
+                "evidence_hash": authorization.evidence_hash,
+                "aligned_with_evidence": authorization.aligned_with_evidence,
+                "authorized": authorization.authorized,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — authorization must never block the decision
+        logger.warning("Settlement authorization skipped: %s", exc)
+
     log_event(
         session,
         objective_id=obj.id,
@@ -880,6 +959,10 @@ def settle_objective(
     ).first()
     approved = review is not None and review.status == AuditStatus.APPROVED
 
+    # The evidence-grounded authorization recorded at decision time — the
+    # deterministic "why this agent is paid" artifact that justifies the release.
+    authorization = validation.latest_authorization(session, obj.id)
+
     treasury = workspace_service.get_treasury(session, workspace.id)
     if not treasury or not treasury.provider_wallet_id:
         raise HTTPException(
@@ -929,7 +1012,16 @@ def settle_objective(
                 session,
                 objective_id=obj.id,
                 kind="settlement.released",
-                message=f"Released {net} USDC to counterparty (fee {fee} USDC, {quote.basis}).",
+                message=(
+                    f"Released {net} USDC to counterparty (fee {fee} USDC, {quote.basis})"
+                    + (
+                        f" — authorized because {authorization.criteria_satisfied}"
+                        f"/{authorization.criteria_total} success criteria are satisfied "
+                        f"by evidence {authorization.evidence_hash[:16]}…."
+                        if authorization
+                        else "."
+                    )
+                ),
                 actor=user.id,
                 data={
                     "net_usdc": str(net),
@@ -937,6 +1029,19 @@ def settle_objective(
                     "fee_basis": quote.basis,
                     "payout_address": payout.address,
                     "payout_tx_ref": transfer.tx_ref,
+                    "authorization_id": authorization.id if authorization else None,
+                    "evidence_verdict": (
+                        authorization.evidence_verdict if authorization else None
+                    ),
+                    "criteria_satisfied": (
+                        authorization.criteria_satisfied if authorization else None
+                    ),
+                    "criteria_total": (
+                        authorization.criteria_total if authorization else None
+                    ),
+                    "evidence_hash": (
+                        authorization.evidence_hash if authorization else None
+                    ),
                 },
             )
         else:
@@ -1212,6 +1317,55 @@ def _validation_out(
     )
 
 
+def _authorization_out(
+    authorization: SettlementAuthorization | None,
+) -> SettlementAuthorizationOut | None:
+    if authorization is None:
+        return None
+    results: list[CriterionResultOut] = []
+    for r in authorization.criteria_results or []:
+        if not isinstance(r, dict):
+            continue
+        basis = [
+            CriterionBasisOut(
+                step_index=b.get("step_index"),
+                step_title=b.get("step_title"),
+                output_kind=b.get("output_kind"),
+                quality=b.get("quality"),
+                matched_terms=list(b.get("matched_terms") or []),
+            )
+            for b in (r.get("basis") or [])
+            if isinstance(b, dict)
+        ]
+        results.append(
+            CriterionResultOut(
+                key=str(r.get("key", "")),
+                description=str(r.get("description", "")),
+                required_evidence_kind=r.get("required_evidence_kind"),
+                satisfied=r.get("satisfied"),
+                confidence=float(r.get("confidence") or 0.0),
+                rationale=str(r.get("rationale", "")),
+                basis=basis,
+            )
+        )
+    return SettlementAuthorizationOut(
+        id=authorization.id,
+        objective_id=authorization.objective_id,
+        evidence_hash=authorization.evidence_hash,
+        criteria_results=results,
+        criteria_total=authorization.criteria_total,
+        criteria_satisfied=authorization.criteria_satisfied,
+        criteria_failed=authorization.criteria_failed,
+        criteria_indeterminate=authorization.criteria_indeterminate,
+        evidence_verdict=authorization.evidence_verdict,
+        headline=authorization.headline,
+        governance_approved=authorization.governance_approved,
+        aligned_with_evidence=authorization.aligned_with_evidence,
+        authorized=authorization.authorized,
+        created_at=authorization.created_at,
+    )
+
+
 def _audit_out(review: AuditReview | None) -> AuditReviewOut | None:
     if review is None:
         return None
@@ -1353,6 +1507,9 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         evaluation=_evaluation_out(evaluation),
         validation=_validation_out(validation_record, validation_validator),
         audit=_audit_out(review),
+        authorization=_authorization_out(
+            validation.latest_authorization(session, obj.id)
+        ),
         settlement=_settlement_out(settlement, payout_address),
         assigned_agent=assigned_agent,
         workflow=[_role_out(session, r) for r in roles],

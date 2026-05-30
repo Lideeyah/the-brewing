@@ -29,7 +29,9 @@ from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
-from app.models import Validator, ValidationRecord
+from app.models import SettlementAuthorization, Validator, ValidationRecord
+
+from . import criteria
 
 logger = logging.getLogger("brewing.validation")
 
@@ -278,6 +280,65 @@ def latest_record(session: Session, objective_id: str) -> ValidationRecord | Non
         select(ValidationRecord)
         .where(ValidationRecord.objective_id == objective_id)
         .order_by(ValidationRecord.created_at.desc())
+    ).first()
+
+
+def record_authorization(
+    session: Session,
+    *,
+    objective_id: str,
+    raw_criteria: object,
+    evidence: list[dict],
+    approved: bool,
+) -> SettlementAuthorization:
+    """Persist the evidence-grounded authorization to settle an objective.
+
+    This is the deterministic bridge from *success criteria* to *the specific
+    evidence that satisfies them* to *payment*. It maps each criterion to the
+    recorded evidence (via the criteria engine), rolls those per-criterion
+    verdicts into an evidence-derived verdict, and binds the whole thing to the
+    same ``evidence_hash`` the independent validator reasoned over so the
+    authorization is tamper-evident and auditable after the fact.
+
+    The human decision stays authoritative: ``authorized`` follows ``approved``.
+    But ``evidence_verdict`` and ``aligned_with_evidence`` record whether the
+    recorded evidence independently supported that decision — which is exactly
+    the "why was this agent paid?" trail.
+    """
+
+    results = criteria.evaluate_criteria(raw_criteria, evidence)
+    summary = criteria.summarize_satisfaction(results)
+    digest = evidence_hash(evidence)
+
+    evidence_pass = summary["verdict"] != REJECTED
+    aligned = evidence_pass == approved
+
+    authorization = SettlementAuthorization(
+        objective_id=objective_id,
+        evidence_hash=digest,
+        criteria_results=results,
+        criteria_total=summary["total"],
+        criteria_satisfied=summary["satisfied"],
+        criteria_failed=summary["failed"],
+        criteria_indeterminate=summary["indeterminate"],
+        evidence_verdict=summary["verdict"],
+        headline=summary["headline"],
+        governance_approved=approved,
+        aligned_with_evidence=aligned,
+        authorized=approved,
+    )
+    session.add(authorization)
+    session.flush()
+    return authorization
+
+
+def latest_authorization(
+    session: Session, objective_id: str
+) -> SettlementAuthorization | None:
+    return session.exec(
+        select(SettlementAuthorization)
+        .where(SettlementAuthorization.objective_id == objective_id)
+        .order_by(SettlementAuthorization.created_at.desc())
     ).first()
 
 

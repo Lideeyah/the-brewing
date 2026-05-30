@@ -478,6 +478,53 @@ class FeedbackCommitment(SQLModel, table=True):
     revealed_at: datetime | None = None
 
 
+class SettlementAuthorization(SQLModel, table=True):
+    """The evidence-grounded authorization to settle an objective.
+
+    Answers *"why was this agent paid?"* deterministically. Where the
+    ValidationRecord judges evidence *quality* in aggregate, this artifact maps
+    each predefined success criterion to the specific recorded evidence that
+    satisfies or fails it, binds that mapping to the exact ``evidence_hash`` the
+    independent validator reasoned over, and records the evidence-derived
+    verdict alongside the authoritative human decision.
+
+    Payment is authorized **because recorded evidence satisfies predefined
+    success criteria** — not because a status flipped. The per-criterion
+    ``criteria_results`` is the auditable "this is why" trail; ``evidence_hash``
+    makes it tamper-evident.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    objective_id: str = Field(foreign_key="objective.id", index=True)
+
+    # Tamper-evident binding to the exact evidence reasoned over. Matches the
+    # ValidationRecord's hash when the underlying evidence is unchanged, proving
+    # the authorization and the validation judged the same artifact.
+    evidence_hash: str = ""
+
+    # Per-criterion satisfaction results (key/description/satisfied/confidence/
+    # rationale/basis) and their roll-up counts.
+    criteria_results: list = Field(default_factory=list, sa_column=Column(JSON))
+    criteria_total: int = 0
+    criteria_satisfied: int = 0
+    criteria_failed: int = 0
+    criteria_indeterminate: int = 0
+
+    # The evidence-derived verdict, independent of the human decision:
+    # "approved" | "approved_with_conditions" | "rejected".
+    evidence_verdict: str = "approved_with_conditions"
+    headline: str = ""
+
+    # The authoritative human governance decision this was reconciled against.
+    governance_approved: bool | None = None
+    # Whether the human decision agreed with the evidence-derived verdict.
+    aligned_with_evidence: bool | None = None
+    # Final authorization: True when settlement is authorized to release funds.
+    authorized: bool | None = None
+
+    created_at: datetime = Field(default_factory=_now)
+
+
 class Settlement(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
