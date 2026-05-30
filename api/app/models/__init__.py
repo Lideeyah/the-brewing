@@ -253,6 +253,80 @@ class GovernanceEvent(SQLModel, table=True):
     created_at: datetime = Field(default_factory=_now)
 
 
+# --- Independent validation layer & registry --------------------------------
+
+
+class Validator(SQLModel, table=True):
+    """An independent validation participant.
+
+    Core invariant of the coordination network: execution must never equal
+    validation. A Validator is a distinct identity from any executor agent — it
+    inspects collected evidence and renders a governance recommendation it is
+    accountable for. Accuracy (upheld vs. overturned against the authoritative
+    human decision) accrues to the validator's own reputation, separate from
+    agent execution reputation.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    # Null workspace == a network-level system validator shared across tenants.
+    workspace_id: str | None = Field(default=None, foreign_key="workspace.id", index=True)
+    # Stable, human-readable key (e.g. "evidence-integrity"); unique per scope.
+    validator_key: str = Field(index=True)
+    name: str
+    kind: str = "evidence_engine"  # evidence_engine | policy_engine | human
+    description: str | None = None
+    # Independence flag: a validator is never permitted to be the executor.
+    independent: bool = True
+    active: bool = True
+
+    # Validation accuracy cache (authoritative history is ValidationRecord).
+    validations_count: int = 0
+    upheld_count: int = 0  # decisions the authoritative governance decision kept
+    overturned_count: int = 0  # decisions the human overrode
+    mean_confidence: float = 0.0
+
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
+class ValidationRecord(SQLModel, table=True):
+    """An evidence-bound validation outcome for one objective.
+
+    Captures the independent validator's recommendation, its confidence, and a
+    cryptographic hash of the exact evidence it reasoned over so the validation
+    is tamper-evident and auditable after the fact. Settlement and reputation
+    both read from this; it is the formal bridge from execution evidence to
+    governance recommendation.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    objective_id: str = Field(foreign_key="objective.id", index=True)
+    validator_id: str = Field(foreign_key="validator.id", index=True)
+    # Optional link to the advisory Copilot evaluation produced alongside it.
+    evaluation_id: str | None = Field(default=None, foreign_key="governanceevaluation.id")
+
+    recommendation: str  # approved | approved_with_conditions | rejected
+    confidence: float = 0.0  # 0..1
+    reasoning: str = ""
+    findings: list = Field(default_factory=list, sa_column=Column(JSON))
+
+    # Tamper-evident binding to the evidence reasoned over.
+    evidence_hash: str = ""
+    evidence_summary: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+    # Independence proof: the executor whose work was validated, and the assertion
+    # that the validator was not that executor.
+    executor_agent_id: str | None = Field(default=None, foreign_key="agentidentity.id")
+    independent_of_executor: bool = True
+
+    # Final governance reconciliation, set when the human decision lands.
+    outcome: str | None = None  # "approved" | "rejected"
+    upheld: bool | None = None  # whether the authoritative decision matched
+
+    created_at: datetime = Field(default_factory=_now)
+    reconciled_at: datetime | None = None
+
+
 # --- Agent identity registry (ERC-8004-shaped) -----------------------------
 
 

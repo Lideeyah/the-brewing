@@ -12,6 +12,7 @@ from app.routers import (
     health,
     objectives,
     trust,
+    validation,
     workspaces,
 )
 
@@ -45,6 +46,7 @@ app.include_router(objectives.router)
 app.include_router(workspaces.router)
 app.include_router(agents.router)
 app.include_router(trust.router)
+app.include_router(validation.router)
 app.include_router(analytics.router)
 
 

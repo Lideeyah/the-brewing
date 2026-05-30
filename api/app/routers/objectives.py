@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.domain import copilot, oracle, registry
+from app.domain import copilot, oracle, registry, validation
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
 from app.domain.settlement.circle_provider import SettlementConfigError
@@ -57,7 +57,11 @@ from app.schemas import (
     ObjectiveDetailOut,
     ObjectiveOut,
     SettlementOut,
+    ValidationFinding,
+    ValidationRecordOut,
+    ValidatorOut,
 )
+from app.models import Validator, ValidationRecord
 
 # USDC has 6 decimal places on-chain.
 _USDC_QUANT = Decimal("0.000001")
@@ -510,6 +514,45 @@ async def evaluate_governance_route(
             "unstructured_present": evidence_summary.get("unstructured_present", False),
         },
     )
+
+    # Independent validation layer: a validator distinct from the executor binds
+    # the collected evidence to a recommendation it is accountable for. This is
+    # the formal validation; the Copilot evaluation above is advisory reasoning.
+    # Never blocks the audit on a validation miss.
+    try:
+        evidence_dicts = [e.to_dict() for e in evidence]
+        record = validation.run_validation(
+            session,
+            objective_id=obj.id,
+            workspace_id=obj.workspace_id,
+            evidence=evidence_dicts,
+            evidence_summary=evidence_summary,
+            executor_agent_id=obj.agent_id,
+            evaluation_id=evaluation.id,
+        )
+        validator = session.get(Validator, record.validator_id)
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="validation.recorded",
+            message=(
+                f"{validator.name if validator else 'Independent validator'} "
+                f"validated the evidence and recommends '{record.recommendation}' "
+                f"({int(record.confidence * 100)}% confidence), independent of the executor."
+            ),
+            actor=validator.validator_key if validator else "validator",
+            data={
+                "validator_id": record.validator_id,
+                "validator_name": validator.name if validator else None,
+                "recommendation": record.recommendation,
+                "confidence": record.confidence,
+                "evidence_hash": record.evidence_hash,
+                "independent_of_executor": record.independent_of_executor,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 — validation must never block the audit
+        logger.warning("Independent validation skipped during evaluation: %s", exc)
+
     session.commit()
     session.refresh(obj)
     return _detail(session, obj)
@@ -574,6 +617,33 @@ def decide_audit(
     obj.status = ObjectiveStatus.GOVERNANCE_DECISION
     obj.updated_at = datetime.now(timezone.utc)
     session.add(obj)
+
+    # Reconcile the independent validation against this authoritative decision so
+    # validator accuracy reflects how often the network kept its call.
+    try:
+        reconciled = validation.reconcile_outcome(
+            session, objective_id=obj.id, approved=approved
+        )
+    except Exception as exc:  # noqa: BLE001 — never block the decision
+        logger.warning("Validation reconciliation skipped: %s", exc)
+        reconciled = []
+    if reconciled:
+        upheld = sum(1 for r in reconciled if r.upheld)
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="validation.reconciled",
+            message=(
+                f"Reconciled {len(reconciled)} validation(s) against the decision: "
+                f"{upheld} upheld, {len(reconciled) - upheld} overturned."
+            ),
+            actor="governance-engine",
+            data={
+                "approved": approved,
+                "upheld": upheld,
+                "overturned": len(reconciled) - upheld,
+            },
+        )
 
     log_event(
         session,
@@ -878,6 +948,62 @@ def _evaluation_out(
     )
 
 
+def _validator_out(validator: Validator | None) -> ValidatorOut | None:
+    if validator is None:
+        return None
+    reconciled = validator.upheld_count + validator.overturned_count
+    return ValidatorOut(
+        id=validator.id,
+        validator_key=validator.validator_key,
+        name=validator.name,
+        kind=validator.kind,
+        description=validator.description,
+        independent=validator.independent,
+        active=validator.active,
+        validations_count=validator.validations_count,
+        upheld_count=validator.upheld_count,
+        overturned_count=validator.overturned_count,
+        accuracy=round(validator.upheld_count / reconciled, 4) if reconciled else None,
+        mean_confidence=validator.mean_confidence,
+        created_at=validator.created_at,
+    )
+
+
+def _validation_out(
+    record: ValidationRecord | None, validator: Validator | None
+) -> ValidationRecordOut | None:
+    if record is None:
+        return None
+    findings = [
+        ValidationFinding(
+            step_index=f.get("step_index"),
+            step_title=f.get("step_title"),
+            output_kind=f.get("output_kind"),
+            quality=f.get("quality"),
+            errors=bool(f.get("errors")),
+        )
+        for f in (record.findings or [])
+        if isinstance(f, dict)
+    ]
+    return ValidationRecordOut(
+        id=record.id,
+        objective_id=record.objective_id,
+        recommendation=record.recommendation,
+        confidence=record.confidence,
+        reasoning=record.reasoning,
+        findings=findings,
+        evidence_hash=record.evidence_hash,
+        evidence_summary=record.evidence_summary or {},
+        executor_agent_id=record.executor_agent_id,
+        independent_of_executor=record.independent_of_executor,
+        outcome=record.outcome,
+        upheld=record.upheld,
+        created_at=record.created_at,
+        reconciled_at=record.reconciled_at,
+        validator=_validator_out(validator),
+    )
+
+
 def _audit_out(review: AuditReview | None) -> AuditReviewOut | None:
     if review is None:
         return None
@@ -944,6 +1070,12 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         .order_by(AuditReview.created_at.desc())
     ).first()
     evaluation = _latest_evaluation(session, obj.id)
+    validation_record = validation.latest_record(session, obj.id)
+    validation_validator = (
+        session.get(Validator, validation_record.validator_id)
+        if validation_record
+        else None
+    )
     settlement = session.exec(
         select(Settlement)
         .where(Settlement.objective_id == obj.id)
@@ -1004,6 +1136,7 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         treasury_address=treasury.address if treasury else None,
         execution=_execution_out(run, list(steps)),
         evaluation=_evaluation_out(evaluation),
+        validation=_validation_out(validation_record, validation_validator),
         audit=_audit_out(review),
         settlement=_settlement_out(settlement, payout_address),
         assigned_agent=assigned_agent,

@@ -143,6 +143,56 @@ class AuditReviewOut(BaseModel):
     created_at: datetime
 
 
+# --- Independent validation layer & registry --------------------------------
+
+
+class ValidatorOut(BaseModel):
+    """A registered independent validator and its accuracy record."""
+
+    id: str
+    validator_key: str
+    name: str
+    kind: str
+    description: str | None = None
+    independent: bool = True
+    active: bool = True
+    validations_count: int = 0
+    upheld_count: int = 0
+    overturned_count: int = 0
+    # Share of reconciled validations the authoritative decision kept (0..1).
+    accuracy: float | None = None
+    mean_confidence: float = 0.0
+    created_at: datetime
+
+
+class ValidationFinding(BaseModel):
+    step_index: int | None = None
+    step_title: str | None = None
+    output_kind: str | None = None
+    quality: str | None = None
+    errors: bool = False
+
+
+class ValidationRecordOut(BaseModel):
+    """An evidence-bound, independent validation outcome for an objective."""
+
+    id: str
+    objective_id: str
+    recommendation: str  # approved | approved_with_conditions | rejected
+    confidence: float
+    reasoning: str
+    findings: list[ValidationFinding] = []
+    evidence_hash: str
+    evidence_summary: dict = {}
+    executor_agent_id: str | None = None
+    independent_of_executor: bool = True
+    outcome: str | None = None  # final governance outcome once reconciled
+    upheld: bool | None = None
+    created_at: datetime
+    reconciled_at: datetime | None = None
+    validator: ValidatorOut | None = None
+
+
 class SettlementOut(BaseModel):
     id: str
     status: str
@@ -173,6 +223,7 @@ class ObjectiveDetailOut(ObjectiveOut):
     treasury_address: str | None = None
     execution: ExecutionRunOut | None = None
     evaluation: GovernanceEvaluationOut | None = None
+    validation: "ValidationRecordOut | None" = None
     audit: AuditReviewOut | None = None
     settlement: SettlementOut | None = None
     assigned_agent: "AssignedAgentOut | None" = None
