@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import get_session
-from app.domain import copilot
+from app.domain import copilot, oracle
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
 from app.domain.settlement.circle_provider import SettlementConfigError
@@ -414,14 +414,29 @@ async def evaluate_governance_route(
         else []
     )
     step_dicts = [
-        {"title": s.title, "status": s.status.value, "output": s.output} for s in steps
+        {
+            "index": s.index,
+            "title": s.title,
+            "status": s.status.value,
+            "output": s.output,
+        }
+        for s in steps
     ]
+
+    # SLA oracle: normalize unstructured / browser-agent outputs into
+    # auditor-readable evidence before evaluation, so the audit handles more
+    # than clean API responses.
+    evidence = oracle.build_evidence(step_dicts)
+    evidence_block = oracle.render_evidence_block(evidence)
+    evidence_summary = oracle.evidence_summary(evidence)
 
     result = await copilot.evaluate_governance(
         intent=obj.intent,
         summary=obj.summary,
         criteria=list(criteria),
         steps=step_dicts,
+        evidence_block=evidence_block,
+        evidence_summary=evidence_summary,
     )
 
     evaluation = GovernanceEvaluation(
@@ -448,6 +463,9 @@ async def evaluate_governance_route(
             "recommendation": evaluation.recommendation,
             "source": evaluation.source,
             "criteria_count": len(criteria),
+            "evidence_kinds": evidence_summary.get("kinds", {}),
+            "evidence_qualities": evidence_summary.get("qualities", {}),
+            "unstructured_present": evidence_summary.get("unstructured_present", False),
         },
     )
     session.commit()

@@ -88,9 +88,64 @@ when the objective is substantially met but non-blocking follow-ups remain."""
 _VALID_RECOMMENDATIONS = {"approved", "approved_with_conditions", "rejected"}
 
 
-def _heuristic_evaluation(criteria: list[str], steps: list[dict]) -> dict:
-    """Deterministic governance evaluation used when the model is unavailable."""
+def _heuristic_evaluation(
+    criteria: list[str], steps: list[dict], evidence_summary: dict | None = None
+) -> dict:
+    """Deterministic governance evaluation used when the model is unavailable.
+
+    When the SLA oracle has supplied an evidence summary, judge on evidence
+    quality (so browser-agent / free-text outputs are handled), not just on
+    step status. Otherwise fall back to "all steps completed".
+    """
     completed = all(s.get("status") == "completed" for s in steps) if steps else False
+
+    if evidence_summary is not None:
+        any_errors = bool(evidence_summary.get("any_errors"))
+        all_strong = bool(evidence_summary.get("all_strong"))
+        met = completed and all_strong and not any_errors
+        if met:
+            assessment = "Normalized evidence is strong and error-free for this criterion."
+            reasoning = (
+                "The SLA oracle normalized all execution outputs (including any "
+                "unstructured browser-agent transcripts) to strong, error-free "
+                "evidence covering the validation criteria."
+            )
+            rec = "approved"
+        elif completed and not any_errors:
+            assessment = "Evidence is present but not uniformly strong for this criterion."
+            reasoning = (
+                "Execution completed and the oracle found no error markers, but "
+                "evidence quality is uneven; non-blocking verification follow-ups remain."
+            )
+            rec = "approved_with_conditions"
+        else:
+            assessment = (
+                "Oracle detected execution errors or missing evidence for this criterion."
+                if any_errors
+                else "Execution did not complete; criterion cannot be verified."
+            )
+            reasoning = (
+                "The SLA oracle surfaced error markers or insufficient evidence in "
+                "the normalized outputs, so the validation criteria cannot be confirmed."
+            )
+            rec = "rejected"
+        conditions = (
+            ["Re-verify uneven-quality evidence before settlement."]
+            if rec == "approved_with_conditions"
+            else []
+        )
+        findings = [
+            {"criterion": c, "met": rec != "rejected", "assessment": assessment}
+            for c in (criteria or ["Deliverable matches the stated intent"])
+        ]
+        return {
+            "recommendation": rec,
+            "reasoning": reasoning,
+            "findings": findings,
+            "conditions": conditions,
+            "_source": "heuristic",
+        }
+
     findings = [
         {
             "criterion": c,
@@ -141,15 +196,21 @@ async def evaluate_governance(
     summary: str | None,
     criteria: list[str],
     steps: list[dict],
+    evidence_block: str | None = None,
+    evidence_summary: dict | None = None,
 ) -> dict:
     """Evaluate recorded execution against governance criteria.
 
-    Returns {recommendation, reasoning, findings, conditions, _source}. Always
-    degrades to a deterministic heuristic so the audit stage never hard-fails.
+    When the SLA oracle has normalized the execution outputs, ``evidence_block``
+    carries the auditor-readable rendering (handles unstructured browser-agent
+    transcripts and free text, not just clean API JSON) and ``evidence_summary``
+    feeds the deterministic fallback. Returns {recommendation, reasoning,
+    findings, conditions, _source}. Always degrades to a deterministic heuristic
+    so the audit stage never hard-fails.
     """
     settings = get_settings()
     if not settings.anthropic_api_key:
-        return _heuristic_evaluation(criteria, steps)
+        return _heuristic_evaluation(criteria, steps, evidence_summary)
 
     try:
         from anthropic import AsyncAnthropic
@@ -157,7 +218,7 @@ async def evaluate_governance(
         client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
         criteria_block = "\n".join(f"- {c}" for c in criteria) or "- (none specified)"
-        outputs_block = (
+        outputs_block = evidence_block or (
             "\n".join(
                 f"{i + 1}. [{s.get('status', 'unknown')}] {s.get('title', 'step')}: "
                 f"{s.get('output') or '(no output recorded)'}"
@@ -165,11 +226,19 @@ async def evaluate_governance(
             )
             or "(no execution steps recorded)"
         )
+        oracle_note = (
+            "\n\nNote: execution outputs below were normalized by the SLA oracle. "
+            "Each line is tagged with [status · output_kind · evidence:quality]. "
+            "Outputs may be unstructured (browser-agent transcripts, free text), "
+            "not clean API responses — judge the substance, not the format."
+            if evidence_block
+            else ""
+        )
         user_msg = (
             f"Operational intent:\n{intent}\n\n"
             f"Objective summary:\n{summary or '(none)'}\n\n"
             f"Governance validation criteria:\n{criteria_block}\n\n"
-            f"Recorded execution outputs:\n{outputs_block}"
+            f"Recorded execution outputs:\n{outputs_block}{oracle_note}"
         )
 
         async with _pacemaker:
@@ -189,7 +258,7 @@ async def evaluate_governance(
         return evaluation
     except Exception as exc:  # noqa: BLE001 — never let governance hard-fail
         logger.warning("Copilot governance evaluation fell back to heuristic: %s", exc)
-        fallback = _heuristic_evaluation(criteria, steps)
+        fallback = _heuristic_evaluation(criteria, steps, evidence_summary)
         fallback["_source"] = "heuristic_fallback"
         return fallback
 
