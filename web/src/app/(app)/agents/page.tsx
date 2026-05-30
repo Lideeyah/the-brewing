@@ -97,6 +97,17 @@ function AgentCard({ agent }: { agent: AgentIdentity }) {
               ) : (
                 <StatusPill tone="neutral">unrated</StatusPill>
               )}
+              <StatusPill
+                tone={
+                  agent.availability === "available"
+                    ? "success"
+                    : agent.availability === "busy"
+                      ? "pending"
+                      : "failure"
+                }
+              >
+                {agent.availability}
+              </StatusPill>
             </div>
             <p className="mt-1 break-all font-operational text-[11px] text-muted">
               {agent.token_id}
@@ -142,6 +153,33 @@ function AgentCard({ agent }: { agent: AgentIdentity }) {
           />
           <Stat label="Completed" value={String(agent.jobs_completed)} />
           <Stat label="Failed" value={String(agent.jobs_failed)} />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-border pt-3 font-operational text-[11px] text-muted">
+          <span>
+            model{" "}
+            <span className="text-secondary">{agent.pricing_model}</span>
+          </span>
+          {agent.min_objective_value_usdc && (
+            <span>
+              min objective{" "}
+              <span className="text-secondary">
+                {agent.min_objective_value_usdc} USDC
+              </span>
+            </span>
+          )}
+          {agent.min_role_compensation_usdc && (
+            <span>
+              min role{" "}
+              <span className="text-secondary">
+                {agent.min_role_compensation_usdc} USDC
+              </span>
+            </span>
+          )}
+          <span>
+            capacity{" "}
+            <span className="text-secondary">{agent.max_concurrent}</span>
+          </span>
         </div>
 
         <div className="flex items-center justify-between gap-3 border-t border-border pt-3">

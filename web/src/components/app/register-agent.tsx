@@ -118,6 +118,57 @@ export function RegisterAgent() {
             </Field>
           </div>
 
+          <div className="rounded-lg border border-border bg-elevated/40 p-3.5">
+            <p className="mb-3 font-operational text-[11px] uppercase tracking-wider text-muted">
+              Coordination constraints
+            </p>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="Pricing model">
+                <select name="pricing_model" defaultValue="fixed" className={inputCls}>
+                  <option value="fixed">Fixed</option>
+                  <option value="hourly">Hourly</option>
+                  <option value="percentage">Percentage</option>
+                  <option value="custom">Custom</option>
+                </select>
+              </Field>
+              <Field label="Availability">
+                <select
+                  name="availability"
+                  defaultValue="available"
+                  className={inputCls}
+                >
+                  <option value="available">Available</option>
+                  <option value="busy">Busy</option>
+                  <option value="offline">Offline</option>
+                </select>
+              </Field>
+              <Field label="Min objective value" hint="USDC">
+                <input
+                  name="min_objective_value_usdc"
+                  inputMode="decimal"
+                  placeholder="e.g. 25"
+                  className={`${inputCls} font-operational`}
+                />
+              </Field>
+              <Field label="Min role compensation" hint="USDC">
+                <input
+                  name="min_role_compensation_usdc"
+                  inputMode="decimal"
+                  placeholder="e.g. 5"
+                  className={`${inputCls} font-operational`}
+                />
+              </Field>
+              <Field label="Max concurrent" hint="capacity">
+                <input
+                  name="max_concurrent"
+                  inputMode="numeric"
+                  defaultValue="5"
+                  className={`${inputCls} font-operational`}
+                />
+              </Field>
+            </div>
+          </div>
+
           {error && (
             <div className="flex items-start gap-2 rounded-lg border border-failure/30 bg-failure/5 p-3">
               <AlertTriangle size={14} className="mt-0.5 shrink-0 text-failure" />

@@ -219,6 +219,23 @@ export async function registerAgent(
       ]
     : [];
 
+  const pricing_model =
+    (formData.get("pricing_model") as string | null)?.trim() || "fixed";
+  const availability =
+    (formData.get("availability") as string | null)?.trim() || "available";
+  const min_objective_value_usdc =
+    (formData.get("min_objective_value_usdc") as string | null)?.trim() ||
+    undefined;
+  const min_role_compensation_usdc =
+    (formData.get("min_role_compensation_usdc") as string | null)?.trim() ||
+    undefined;
+  const maxConcurrentRaw = (
+    formData.get("max_concurrent") as string | null
+  )?.trim();
+  const max_concurrent = maxConcurrentRaw
+    ? Number.parseInt(maxConcurrentRaw, 10)
+    : undefined;
+
   try {
     const agent = await apiPost<AgentIdentity>("/agents", {
       name,
@@ -228,6 +245,13 @@ export async function registerAgent(
       service_endpoints,
       pricing,
       discoverable: true,
+      pricing_model,
+      availability,
+      min_objective_value_usdc,
+      min_role_compensation_usdc,
+      ...(max_concurrent && Number.isFinite(max_concurrent)
+        ? { max_concurrent }
+        : {}),
     });
     revalidatePath("/agents");
     return { ok: true, agent };
