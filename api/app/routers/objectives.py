@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 from app.auth import get_current_user
 from app.db import get_session
 from app.domain import copilot, oracle, registry, validation
+from app.domain import workflow as workflow_domain
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
 from app.domain.settlement.circle_provider import SettlementConfigError
@@ -53,6 +54,9 @@ from app.schemas import (
     GovernanceEvaluationOut,
     GovernanceEventOut,
     GovernanceFinding,
+    AssignRoleIn,
+    FeasibilityReport,
+    FeasibilityRoleCheck,
     ObjectiveCreate,
     ObjectiveDetailOut,
     ObjectiveOut,
@@ -60,8 +64,9 @@ from app.schemas import (
     ValidationFinding,
     ValidationRecordOut,
     ValidatorOut,
+    WorkflowRoleOut,
 )
-from app.models import Validator, ValidationRecord
+from app.models import RoleStatus, Validator, ValidationRecord, WorkflowRole
 
 # USDC has 6 decimal places on-chain.
 _USDC_QUANT = Decimal("0.000001")
@@ -210,6 +215,86 @@ def assign_agent(
     return _detail(session, obj)
 
 
+@router.post(
+    "/{objective_id}/roles/{role_id}/assign", response_model=ObjectiveDetailOut
+)
+def assign_role(
+    objective_id: str,
+    role_id: str,
+    body: AssignRoleIn,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> ObjectiveDetailOut:
+    """Bind a registered agent to one workflow role.
+
+    The feasibility engine's agent-pricing constraints are enforced here: an
+    assignment that violates the agent's minimum role compensation, minimum
+    objective value, or availability is refused so an infeasible workflow can
+    never be locked.
+    """
+    obj = _get_owned_objective(session, workspace, objective_id)
+    role = session.get(WorkflowRole, role_id)
+    if role is None or role.objective_id != obj.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Role not found"
+        )
+    agent = session.get(AgentIdentity, body.agent_id)
+    if agent is None or agent.workspace_id != workspace.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found"
+        )
+
+    # Enforce the agent's pricing/availability constraints against this role.
+    alloc = Decimal(role.allocation_usdc or "0")
+    budget = Decimal(obj.escrow_amount_usdc or "0")
+    issues: list[str] = []
+    min_comp = Decimal(agent.min_role_compensation_usdc or "0")
+    if min_comp > 0 and alloc < min_comp:
+        issues.append(
+            f"Role allocation {alloc} USDC is below {agent.name}'s minimum role "
+            f"compensation of {min_comp} USDC."
+        )
+    min_obj = Decimal(agent.min_objective_value_usdc or "0")
+    if min_obj > 0 and budget < min_obj:
+        issues.append(
+            f"Objective budget {budget} USDC is below {agent.name}'s minimum "
+            f"objective value of {min_obj} USDC."
+        )
+    if agent.availability == "offline":
+        issues.append(f"{agent.name} is offline and cannot be assigned.")
+    if issues:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": "constraint_violation", "issues": issues},
+        )
+
+    role.assigned_agent_id = agent.id
+    role.status = RoleStatus.ASSIGNED
+    role.updated_at = datetime.now(timezone.utc)
+    session.add(role)
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="role.assigned",
+        message=(
+            f"Assigned {agent.name} to the {role.title} role "
+            f"({role.allocation_usdc} USDC allocation)."
+        ),
+        actor=user.id,
+        data={
+            "role_id": role.id,
+            "role_key": role.role_key,
+            "agent_id": agent.id,
+            "token_id": agent.token_id,
+            "allocation_usdc": role.allocation_usdc,
+        },
+    )
+    session.commit()
+    session.refresh(obj)
+    return _detail(session, obj)
+
+
 @router.post("/{objective_id}/structure", response_model=ObjectiveDetailOut)
 async def structure_objective(
     objective_id: str,
@@ -233,14 +318,33 @@ async def structure_objective(
     obj.status = ObjectiveStatus.COPILOT_STRUCTURED
     obj.updated_at = datetime.now(timezone.utc)
     session.add(obj)
+    session.flush()
+
+    # Multi-agent workflow: decompose the objective into independently assignable
+    # roles with budget-proportional settlement allocations. Re-generated on each
+    # (re)structure since no role is assigned or settled yet at this stage.
+    try:
+        budget = Decimal(obj.escrow_amount_usdc or "0")
+    except InvalidOperation:
+        budget = Decimal("0")
+    role_specs = workflow_domain.normalize_workflow(
+        structured.get("workflow"), obj.intent, budget
+    )
+    roles = workflow_domain.replace_roles(session, obj.id, role_specs)
 
     log_event(
         session,
         objective_id=obj.id,
         kind="objective.structured",
-        message="Coordination Copilot structured the objective into governance, SLA, and settlement terms.",
+        message=(
+            "Coordination Copilot structured the objective into governance, SLA, "
+            f"settlement terms, and a {len(roles)}-role workflow."
+        ),
         actor="copilot",
-        data={"source": structured.get("_source")},
+        data={
+            "source": structured.get("_source"),
+            "roles": [r.role_key for r in roles],
+        },
     )
     session.commit()
     session.refresh(obj)
@@ -1124,6 +1228,13 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         agent = session.get(AgentIdentity, obj.agent_id)
         if agent is not None:
             assigned_agent = _assigned_agent_out(agent)
+
+    roles = workflow_domain.get_roles(session, obj.id)
+    feasibility = (
+        _feasibility_out(workflow_domain.evaluate_feasibility(session, obj, roles))
+        if roles
+        else None
+    )
     base = _objective_out(obj)
     return ObjectiveDetailOut(
         **base.model_dump(),
@@ -1140,6 +1251,8 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         audit=_audit_out(review),
         settlement=_settlement_out(settlement, payout_address),
         assigned_agent=assigned_agent,
+        workflow=[_role_out(session, r) for r in roles],
+        feasibility=feasibility,
     )
 
 
@@ -1154,4 +1267,36 @@ def _assigned_agent_out(agent: AgentIdentity) -> AssignedAgentOut:
         jobs_failed=agent.jobs_failed,
         rated=total > 0,
         success_rate=round(agent.jobs_completed / total, 4) if total > 0 else None,
+    )
+
+
+def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
+    assigned_agent = None
+    if role.assigned_agent_id:
+        agent = session.get(AgentIdentity, role.assigned_agent_id)
+        if agent is not None:
+            assigned_agent = _assigned_agent_out(agent)
+    return WorkflowRoleOut(
+        id=role.id,
+        order_index=role.order_index,
+        role_key=role.role_key,
+        title=role.title,
+        description=role.description,
+        assigned_agent_id=role.assigned_agent_id,
+        assigned_agent=assigned_agent,
+        allocation_usdc=role.allocation_usdc,
+        status=role.status.value if hasattr(role.status, "value") else str(role.status),
+    )
+
+
+def _feasibility_out(report: dict) -> FeasibilityReport:
+    return FeasibilityReport(
+        feasible=report["feasible"],
+        budget_usdc=report["budget_usdc"],
+        required_usdc=report["required_usdc"],
+        shortfall_usdc=report["shortfall_usdc"],
+        over_budget=report["over_budget"],
+        blocking_roles=report["blocking_roles"],
+        role_checks=[FeasibilityRoleCheck(**c) for c in report["role_checks"]],
+        recommendations=report["recommendations"],
     )

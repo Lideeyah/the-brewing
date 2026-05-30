@@ -54,11 +54,20 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
   },
   "orchestration_plan": {
      "steps": [ {"title": short step title, "detail": one sentence} ]  // 3-6 steps
-  }
+  },
+  "workflow": [
+     {"role_key": one of "planner"|"research"|"analysis"|"executor"|"reviewer"|"validator",
+      "title": short role title,
+      "description": one sentence on what this role delivers,
+      "allocation_pct": number 0-100}      // 2-5 roles; allocation_pct should sum to ~100
+  ]
 }
 
-Frame execution as ORCHESTRATION of work toward the objective. Do not invent an
-agent marketplace, registry, or scheduler. Be concrete and concise."""
+The OBJECTIVE is the outcome; the workflow is the multi-role team that fulfills
+it. Decompose into the smallest set of distinct roles the outcome actually
+needs (a simple task may be a single executor + reviewer). Frame execution as
+ORCHESTRATION of work toward the objective. Do not invent an agent marketplace
+or scheduler. Be concrete and concise."""
 
 
 _EVAL_SYSTEM = """You are the Brewing Coordination Copilot acting as a governance auditor.
@@ -265,7 +274,21 @@ async def evaluate_governance(
 
 def _heuristic_structure(intent: str, title: str | None) -> dict:
     """Deterministic fallback used when the model is unavailable."""
+    from decimal import Decimal
+
+    from app.domain import workflow as workflow_domain
+
     derived_title = title or (intent.strip().split("\n")[0][:80] or "New objective")
+    default_workflow = [
+        {
+            "role_key": r["role_key"],
+            "title": r["title"],
+            "description": r["description"],
+            # Express as a percent of the default 100 USDC budget.
+            "allocation_pct": round(float(Decimal(r["allocation_usdc"])), 2),
+        }
+        for r in workflow_domain.generate_workflow(intent, Decimal("100"))
+    ]
     return {
         "title": derived_title,
         "summary": (
@@ -298,6 +321,7 @@ def _heuristic_structure(intent: str, title: str | None) -> dict:
                 {"title": "Submit for audit", "detail": "Hand off results for governance review."},
             ]
         },
+        "workflow": default_workflow,
         "_source": "heuristic",
     }
 

@@ -163,6 +163,43 @@ class Objective(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_now)
 
 
+class RoleStatus(str, Enum):
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class WorkflowRole(SQLModel, table=True):
+    """One role in an objective's multi-agent workflow.
+
+    An objective decomposes into a workflow of 1..N roles (planner, research,
+    analysis, executor, reviewer, validator, …). Each role is assigned
+    independently to an agent (or, in future, a human), carries its own
+    settlement allocation, and resolves to its own completed/failed outcome —
+    enabling partial settlement and per-role slashing.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    objective_id: str = Field(foreign_key="objective.id", index=True)
+    order_index: int = 0
+    role_key: str = "executor"  # planner|research|analysis|executor|reviewer|validator
+    title: str
+    description: str | None = None
+
+    # Independently assignable. Null until an agent is bound to the role.
+    assigned_agent_id: str | None = Field(
+        default=None, foreign_key="agentidentity.id", index=True
+    )
+    # Role-level settlement allocation (exact USDC decimal as string).
+    allocation_usdc: str = "0"
+
+    status: RoleStatus = Field(default=RoleStatus.PENDING, index=True)
+
+    created_at: datetime = Field(default_factory=_now)
+    updated_at: datetime = Field(default_factory=_now)
+
+
 class EscrowState(SQLModel, table=True):
     id: str = Field(default_factory=_id, primary_key=True)
     objective_id: str = Field(foreign_key="objective.id", index=True)
@@ -354,6 +391,17 @@ class AgentIdentity(SQLModel, table=True):
     pricing: str | None = None
     # Whether the agent is listed as discoverable + hireable in the marketplace.
     discoverable: bool = Field(default=True, index=True)
+
+    # Pricing & availability constraints that govern workflow feasibility. The
+    # feasibility engine refuses to assign an agent to a role that violates these.
+    pricing_model: str = "fixed"  # fixed | hourly | percentage | custom
+    # Floor on the total objective value the agent will engage with.
+    min_objective_value_usdc: str | None = None
+    # Floor on the compensation the agent must receive from a single role.
+    min_role_compensation_usdc: str | None = None
+    availability: str = "available"  # available | busy | offline
+    # Maximum concurrent objectives the agent will hold at once.
+    max_concurrent: int = 5
 
     # Reputation read cache (authoritative history is ReputationEvent).
     reputation_score: float = 0.0  # 0..100; jobs_total == 0 means "unrated"

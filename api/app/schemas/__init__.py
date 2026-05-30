@@ -213,6 +213,51 @@ class AuditDecision(BaseModel):
     notes: str | None = None
 
 
+# --- Multi-agent workflow ---------------------------------------------------
+
+
+class WorkflowRoleOut(BaseModel):
+    """One independently assignable role in an objective's workflow."""
+
+    id: str
+    order_index: int
+    role_key: str  # planner | research | analysis | executor | reviewer | validator
+    title: str
+    description: str | None = None
+    assigned_agent_id: str | None = None
+    assigned_agent: "AssignedAgentOut | None" = None
+    allocation_usdc: str = "0"
+    status: str = "pending"
+
+
+class FeasibilityRoleCheck(BaseModel):
+    role_id: str
+    role_key: str
+    title: str
+    allocation_usdc: str
+    assigned_agent_id: str | None = None
+    assigned_agent_name: str | None = None
+    ok: bool
+    issues: list[str] = []
+
+
+class FeasibilityReport(BaseModel):
+    """Budget vs. workflow cost vs. agent-minimum reconciliation."""
+
+    feasible: bool
+    budget_usdc: str
+    required_usdc: str
+    shortfall_usdc: str
+    over_budget: bool
+    blocking_roles: int
+    role_checks: list[FeasibilityRoleCheck] = []
+    recommendations: list[str] = []
+
+
+class AssignRoleIn(BaseModel):
+    agent_id: str  # AgentIdentity.id to bind to this role
+
+
 class ObjectiveDetailOut(ObjectiveOut):
     governance_config: dict
     sla_config: dict
@@ -227,6 +272,8 @@ class ObjectiveDetailOut(ObjectiveOut):
     audit: AuditReviewOut | None = None
     settlement: SettlementOut | None = None
     assigned_agent: "AssignedAgentOut | None" = None
+    workflow: list["WorkflowRoleOut"] = []
+    feasibility: "FeasibilityReport | None" = None
 
 
 # --- Agent identity registry ------------------------------------------------
@@ -247,6 +294,12 @@ class AgentRegisterIn(BaseModel):
     pricing: str | None = None  # free-text, e.g. "0.05 USDC / call"
     discoverable: bool = True
     metadata_uri: str | None = None
+    # Pricing & availability constraints that govern workflow feasibility.
+    pricing_model: str = "fixed"  # fixed | hourly | percentage | custom
+    min_objective_value_usdc: str | None = None
+    min_role_compensation_usdc: str | None = None
+    availability: str = "available"  # available | busy | offline
+    max_concurrent: int = 5
 
 
 class ReputationEventOut(BaseModel):
@@ -274,6 +327,11 @@ class AgentIdentityOut(BaseModel):
     jobs_failed: int
     rated: bool  # false until the agent has at least one outcome
     success_rate: float | None = None  # null until the agent has any outcome
+    pricing_model: str = "fixed"
+    min_objective_value_usdc: str | None = None
+    min_role_compensation_usdc: str | None = None
+    availability: str = "available"
+    max_concurrent: int = 5
     metadata_uri: str | None = None
     registry_chain: str | None = None
     registry_address: str | None = None

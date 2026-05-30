@@ -59,6 +59,11 @@ def _agent_out(agent: AgentIdentity) -> AgentIdentityOut:
         jobs_failed=agent.jobs_failed,
         rated=total > 0,
         success_rate=round(agent.jobs_completed / total, 4) if total > 0 else None,
+        pricing_model=agent.pricing_model,
+        min_objective_value_usdc=agent.min_objective_value_usdc,
+        min_role_compensation_usdc=agent.min_role_compensation_usdc,
+        availability=agent.availability,
+        max_concurrent=agent.max_concurrent,
         metadata_uri=agent.metadata_uri,
         registry_chain=agent.registry_chain,
         registry_address=agent.registry_address,
@@ -119,6 +124,11 @@ def register_agent(
         pricing=body.pricing,
         discoverable=body.discoverable,
         metadata_uri=body.metadata_uri,
+        pricing_model=body.pricing_model,
+        min_objective_value_usdc=body.min_objective_value_usdc,
+        min_role_compensation_usdc=body.min_role_compensation_usdc,
+        availability=body.availability,
+        max_concurrent=body.max_concurrent,
     )
     return _agent_out(agent)
 

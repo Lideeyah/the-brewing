@@ -60,6 +60,11 @@ def register_agent(
     description: str | None = None,
     pricing: str | None = None,
     discoverable: bool = True,
+    pricing_model: str = "fixed",
+    min_objective_value_usdc: str | None = None,
+    min_role_compensation_usdc: str | None = None,
+    availability: str = "available",
+    max_concurrent: int = 5,
 ) -> AgentIdentity:
     """Mint a new agent identity token within a workspace."""
 
@@ -85,6 +90,11 @@ def register_agent(
         pricing=pricing,
         discoverable=discoverable,
         metadata_uri=metadata_uri,
+        pricing_model=pricing_model,
+        min_objective_value_usdc=min_objective_value_usdc,
+        min_role_compensation_usdc=min_role_compensation_usdc,
+        availability=availability,
+        max_concurrent=max_concurrent,
         signing_secret=signing_secret,
         signing_pubkey=signing_pubkey,
     )

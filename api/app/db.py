@@ -43,6 +43,11 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "description": "VARCHAR",
         "pricing": "VARCHAR",
         "discoverable": "BOOLEAN NOT NULL DEFAULT 1",
+        "pricing_model": "VARCHAR NOT NULL DEFAULT 'fixed'",
+        "min_objective_value_usdc": "VARCHAR",
+        "min_role_compensation_usdc": "VARCHAR",
+        "availability": "VARCHAR NOT NULL DEFAULT 'available'",
+        "max_concurrent": "INTEGER NOT NULL DEFAULT 5",
     },
     "workspace": {
         "subscription_tier": "VARCHAR NOT NULL DEFAULT 'free'",
