@@ -17,6 +17,7 @@ from app.models import (
     AgentIdentity,
     FeedbackCommitment,
     Objective,
+    PayoutAddressEvent,
     ReputationEvent,
     User,
     Workspace,
@@ -28,6 +29,10 @@ from app.schemas import (
     FeedbackCommitIn,
     FeedbackCommitmentOut,
     FeedbackRevealIn,
+    PayoutAddressEventOut,
+    PayoutChallengeIn,
+    PayoutChallengeOut,
+    PayoutVerifyIn,
     ReputationDimension,
     ReputationEventOut,
 )
@@ -69,7 +74,24 @@ def _agent_out(agent: AgentIdentity) -> AgentIdentityOut:
         registry_chain=agent.registry_chain,
         registry_address=agent.registry_address,
         signing_pubkey=agent.signing_pubkey,
+        payout_address=agent.payout_address,
+        payout_blockchain=agent.payout_blockchain,
+        payout_address_verified=agent.payout_address_verified,
+        payout_address_verified_at=agent.payout_address_verified_at,
         created_at=agent.created_at,
+    )
+
+
+def _payout_event_out(ev: PayoutAddressEvent) -> PayoutAddressEventOut:
+    return PayoutAddressEventOut(
+        id=ev.id,
+        action=ev.action,
+        old_address=ev.old_address,
+        new_address=ev.new_address,
+        verified=ev.verified,
+        actor=ev.actor,
+        note=ev.note,
+        created_at=ev.created_at,
     )
 
 
@@ -161,10 +183,85 @@ def get_agent(
     ).all()
     base = _agent_out(agent)
     dimensions = registry.trust_dimensions(session, agent)
+    payouts = registry.payout_history(session, agent)
     return AgentDetailOut(
         **base.model_dump(),
         reputation_history=[_event_out(e) for e in history],
         trust_dimensions=[ReputationDimension(**d) for d in dimensions],
+        payout_history=[_payout_event_out(p) for p in payouts],
+    )
+
+
+@router.post("/{agent_id}/payout/challenge", response_model=PayoutChallengeOut)
+def request_payout_challenge(
+    agent_id: str,
+    body: PayoutChallengeIn,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> PayoutChallengeOut:
+    """Issue a proof-of-control challenge for a candidate payout address.
+
+    The agent must sign the returned `challenge` with the payout wallet's
+    private key and submit the signature to `/payout/verify`. Until that
+    succeeds, the address is not usable as a settlement destination.
+    """
+    agent = _get_owned_agent(session, workspace, agent_id)
+    try:
+        challenge, expires_at = registry.issue_payout_challenge(
+            session,
+            agent=agent,
+            address=body.address,
+            blockchain=body.blockchain,
+            actor=user.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        )
+    return PayoutChallengeOut(
+        agent_id=agent.id,
+        address=agent.payout_challenge_address or body.address,
+        challenge=challenge,
+        expires_at=expires_at,
+    )
+
+
+@router.post("/{agent_id}/payout/verify", response_model=AgentDetailOut)
+def verify_payout_address(
+    agent_id: str,
+    body: PayoutVerifyIn,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> AgentDetailOut:
+    """Verify the signed challenge and bind the proven payout address.
+
+    On success the address becomes the agent's verified settlement destination;
+    the change is recorded in the payout audit trail.
+    """
+    agent = _get_owned_agent(session, workspace, agent_id)
+    try:
+        agent = registry.verify_payout_address(
+            session, agent=agent, signature=body.signature, actor=user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)
+        )
+    history = session.exec(
+        select(ReputationEvent)
+        .where(ReputationEvent.agent_id == agent.id)
+        .order_by(ReputationEvent.created_at.desc())
+    ).all()
+    base = _agent_out(agent)
+    dimensions = registry.trust_dimensions(session, agent)
+    payouts = registry.payout_history(session, agent)
+    return AgentDetailOut(
+        **base.model_dump(),
+        reputation_history=[_event_out(e) for e in history],
+        trust_dimensions=[ReputationDimension(**d) for d in dimensions],
+        payout_history=[_payout_event_out(p) for p in payouts],
     )
 
 

@@ -554,6 +554,12 @@ class AgentIdentityOut(BaseModel):
     registry_chain: str | None = None
     registry_address: str | None = None
     signing_pubkey: str | None = None  # public verifier; the secret is never exposed
+    # Payout destination (Escrow V1.5). Only a *verified* address is ever used as
+    # a settlement destination; `payout_address_verified` reflects proof-of-control.
+    payout_address: str | None = None
+    payout_blockchain: str | None = None
+    payout_address_verified: bool = False
+    payout_address_verified_at: datetime | None = None
     created_at: datetime
 
 
@@ -571,9 +577,40 @@ class ReputationDimension(BaseModel):
     hint: str | None = None
 
 
+class PayoutAddressEventOut(BaseModel):
+    id: str
+    action: str  # challenge_issued | registered | changed | verification_failed | cleared
+    old_address: str | None = None
+    new_address: str | None = None
+    verified: bool = False
+    actor: str | None = None
+    note: str | None = None
+    created_at: datetime
+
+
 class AgentDetailOut(AgentIdentityOut):
     reputation_history: list[ReputationEventOut] = []
     trust_dimensions: list[ReputationDimension] = []
+    payout_history: list[PayoutAddressEventOut] = []
+
+
+class PayoutChallengeIn(BaseModel):
+    address: str  # candidate payout wallet (Solana base58 address)
+    blockchain: str | None = None  # optional chain context, e.g. "SOL-DEVNET"
+
+
+class PayoutChallengeOut(BaseModel):
+    """The string the agent's wallet must sign to prove control of `address`."""
+
+    agent_id: str
+    address: str
+    challenge: str
+    expires_at: datetime
+
+
+class PayoutVerifyIn(BaseModel):
+    # ed25519 signature over the issued challenge, base58 or hex encoded.
+    signature: str
 
 
 class FeedbackCommitIn(BaseModel):

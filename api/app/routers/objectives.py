@@ -1079,7 +1079,12 @@ def settle_subtask(
             quote = quote_settlement_fee(alloc)
             fee = quote.fee_usdc
             net = (alloc - fee).quantize(_USDC_QUANT)
-            payout = _resolve_payout_wallet(provider, ref=f"payout-{obj.id}-{role.id}")
+            payout = _resolve_payout_wallet(
+                provider,
+                session,
+                ref=f"payout-{obj.id}-{role.id}",
+                agent_id=role.assigned_agent_id,
+            )
             transfer = provider.release_escrow(
                 EscrowRef(
                     provider_escrow_id=escrow.provider_escrow_id or "",
@@ -1620,7 +1625,12 @@ def settle_objective(
             quote = quote_settlement_fee(amount)
             fee = quote.fee_usdc
             net = (amount - fee).quantize(_USDC_QUANT)
-            payout = _resolve_payout_wallet(provider, ref=f"payout-{obj.id}")
+            payout = _resolve_payout_wallet(
+                provider,
+                session,
+                ref=f"payout-{obj.id}",
+                agent_id=obj.agent_id,
+            )
             release_ref = EscrowRef(
                 provider_escrow_id=escrow.provider_escrow_id or "",
                 address=escrow.address or "",
@@ -1839,18 +1849,34 @@ def _resolve_tx_hash(tx_ref: str | None, existing: str | None) -> str | None:
         return None
 
 
-def _resolve_payout_wallet(provider, *, ref: str) -> WalletRef:
+def _resolve_payout_wallet(
+    provider,
+    session: Session,
+    *,
+    ref: str,
+    agent_id: str | None = None,
+) -> WalletRef:
     """Resolve the destination wallet a release settles funds into.
 
-    Migration seam — deliberately the only place this decision is made. Today it
-    provisions a fresh provider wallet per settlement, which is a wallet-per-
-    objective artifact (a throwaway destination minted at payout time). The
-    durable model resolves the payee's *registered* wallet — e.g. the assigned
-    agent's persistent payout address — so funds land in a counterparty-owned
-    account and no new wallet is created per settlement. Centralizing it here
-    means that change touches one function, not every settle call site.
+    Single decision point for *where* a release lands (Escrow V1.5). When the
+    payee agent has a payout address it has *proven control of* (signed a
+    challenge — see app.domain.payout), funds settle to that counterparty-owned
+    wallet directly; no new wallet is minted. Only a verified address is ever
+    used, so an unproven or absent one transparently falls back to provisioning
+    a fresh provider wallet — preserving prior behavior for unassigned or
+    unregistered payees. This keeps escrow custody, the settlement model, and the
+    fee model untouched: only the *destination* of a release changed.
     See docs/payout-destination-decoupling-proposal.md.
     """
+    if agent_id:
+        agent = session.get(AgentIdentity, agent_id)
+        address = registry.resolve_verified_payout_address(agent)
+        if address:
+            return WalletRef(
+                provider_wallet_id="",
+                address=address,
+                blockchain=(agent.payout_blockchain if agent else "") or "",
+            )
     return provider.provision_treasury_wallet(ref)
 
 
