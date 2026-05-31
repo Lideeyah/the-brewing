@@ -49,6 +49,14 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "min_role_compensation_usdc": "VARCHAR",
         "availability": "VARCHAR NOT NULL DEFAULT 'available'",
         "max_concurrent": "INTEGER NOT NULL DEFAULT 5",
+        # Escrow V1.5 — payout destination + proof-of-control state.
+        "payout_address": "VARCHAR",
+        "payout_blockchain": "VARCHAR",
+        "payout_address_verified": "BOOLEAN NOT NULL DEFAULT 0",
+        "payout_address_verified_at": "DATETIME",
+        "payout_challenge": "VARCHAR",
+        "payout_challenge_address": "VARCHAR",
+        "payout_challenge_expires_at": "DATETIME",
     },
     "workspace": {
         "subscription_tier": "VARCHAR NOT NULL DEFAULT 'free'",

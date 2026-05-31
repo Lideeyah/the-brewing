@@ -444,6 +444,22 @@ class AgentIdentity(SQLModel, table=True):
     token_id: str = Field(index=True, unique=True)
     owner: str  # owner / agentic-wallet address holding signing authority
     name: str
+
+    # --- Payout destination (Escrow V1.5) ----------------------------------
+    # The wallet a release settles funds into. Distinct from `owner` so an agent
+    # can be paid somewhere other than its signing-authority address. A payout
+    # address is only usable as a settlement destination once the agent has
+    # *proven control* of it by signing a challenge (see app.domain.payout);
+    # `payout_address_verified` gates that. Settlement must never release to an
+    # unverified address. All changes are recorded in PayoutAddressEvent.
+    payout_address: str | None = None
+    payout_blockchain: str | None = None  # chain context, e.g. "SOL-DEVNET"
+    payout_address_verified: bool = Field(default=False)
+    payout_address_verified_at: datetime | None = None
+    # Outstanding proof-of-control challenge (single, one-time, time-boxed).
+    payout_challenge: str | None = None
+    payout_challenge_address: str | None = None
+    payout_challenge_expires_at: datetime | None = None
     description: str | None = None  # what the agent does (marketplace listing)
     capabilities: list = Field(default_factory=list, sa_column=Column(JSON))
     service_endpoints: list = Field(default_factory=list, sa_column=Column(JSON))
@@ -482,6 +498,28 @@ class AgentIdentity(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
+
+
+class PayoutAddressEvent(SQLModel, table=True):
+    """Append-only audit trail of an agent's payout-address lifecycle.
+
+    Every issue/verify/change/clear of a payout destination is recorded here, so
+    the address that receives real funds is always traceable to who set it, when,
+    and whether control was proven. A silent swap of the payout address right
+    before settlement is therefore impossible without leaving an audited record.
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    agent_id: str = Field(foreign_key="agentidentity.id", index=True)
+    workspace_id: str = Field(foreign_key="workspace.id", index=True)
+    # "challenge_issued" | "registered" | "changed" | "verification_failed" | "cleared"
+    action: str
+    old_address: str | None = None
+    new_address: str | None = None
+    verified: bool = False  # whether control was proven by this event
+    actor: str | None = None  # user id that initiated the change
+    note: str | None = None
+    created_at: datetime = Field(default_factory=_now)
 
 
 class ReputationEvent(SQLModel, table=True):

@@ -22,12 +22,14 @@ from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
+from app.domain import payout as payout_proof
 from app.models import (
     AgentIdentity,
     EscrowState,
     FeedbackCommitment,
     Objective,
     ObjectiveStatus,
+    PayoutAddressEvent,
     ReputationEvent,
     Settlement,
     SettlementStatus,
@@ -152,6 +154,213 @@ def verify_commitment(agent: AgentIdentity, commitment: FeedbackCommitment) -> b
 
     expected = _sign(agent, commitment.commitment_hash)
     return hmac.compare_digest(expected, commitment.signature)
+
+
+# --- Payout destination & proof-of-control (Escrow V1.5) -------------------
+
+
+def _ensure_aware(dt: datetime) -> datetime:
+    """Normalize a possibly-naive DB datetime to aware UTC for comparison."""
+
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _log_payout_event(
+    session: Session,
+    *,
+    agent: AgentIdentity,
+    action: str,
+    old_address: str | None = None,
+    new_address: str | None = None,
+    verified: bool = False,
+    actor: str | None = None,
+    note: str | None = None,
+) -> PayoutAddressEvent:
+    event = PayoutAddressEvent(
+        agent_id=agent.id,
+        workspace_id=agent.workspace_id,
+        action=action,
+        old_address=old_address,
+        new_address=new_address,
+        verified=verified,
+        actor=actor,
+        note=note,
+    )
+    session.add(event)
+    return event
+
+
+def issue_payout_challenge(
+    session: Session,
+    *,
+    agent: AgentIdentity,
+    address: str,
+    blockchain: str | None = None,
+    actor: str | None = None,
+) -> tuple[str, datetime]:
+    """Begin proof-of-control for a candidate payout address.
+
+    Validates the address format, mints a one-time, time-boxed challenge the
+    wallet must sign, and stores it as the agent's single outstanding challenge.
+    Returns ``(challenge, expires_at)``. Raises ``ValueError`` on a malformed
+    address. Does not touch the agent's *active* payout address — that only
+    changes once control is proven via :func:`verify_payout_address`.
+    """
+
+    normalized = payout_proof.normalize_address(address)  # raises ValueError
+    challenge = payout_proof.new_challenge(normalized)
+    expires_at = _now() + payout_proof.CHALLENGE_TTL
+    agent.payout_challenge = challenge
+    agent.payout_challenge_address = normalized
+    agent.payout_challenge_expires_at = expires_at
+    if blockchain:
+        agent.payout_blockchain = blockchain  # tentative; confirmed on verify
+    agent.updated_at = _now()
+    session.add(agent)
+    _log_payout_event(
+        session,
+        agent=agent,
+        action="challenge_issued",
+        new_address=normalized,
+        actor=actor,
+        note="proof-of-control challenge issued",
+    )
+    session.commit()
+    session.refresh(agent)
+    return challenge, expires_at
+
+
+def verify_payout_address(
+    session: Session,
+    *,
+    agent: AgentIdentity,
+    signature: str,
+    actor: str | None = None,
+) -> AgentIdentity:
+    """Complete proof-of-control: verify the signature over the live challenge.
+
+    On success the candidate address becomes the agent's verified payout
+    destination and the challenge is consumed. A change away from a previously
+    verified address is recorded as an audited ``changed`` event. Raises
+    ``ValueError`` if there is no live challenge, it has expired, or the
+    signature does not verify. Failures are audited too.
+    """
+
+    challenge = agent.payout_challenge
+    candidate = agent.payout_challenge_address
+    expires_at = agent.payout_challenge_expires_at
+    if not challenge or not candidate:
+        raise ValueError("no outstanding payout challenge; request one first")
+
+    if expires_at is not None and _ensure_aware(expires_at) < _now():
+        agent.payout_challenge = None
+        agent.payout_challenge_address = None
+        agent.payout_challenge_expires_at = None
+        session.add(agent)
+        _log_payout_event(
+            session,
+            agent=agent,
+            action="verification_failed",
+            new_address=candidate,
+            actor=actor,
+            note="challenge expired",
+        )
+        session.commit()
+        raise ValueError("payout challenge expired; request a new one")
+
+    if not payout_proof.verify_control(candidate, challenge, signature):
+        _log_payout_event(
+            session,
+            agent=agent,
+            action="verification_failed",
+            new_address=candidate,
+            actor=actor,
+            note="signature did not verify",
+        )
+        session.commit()
+        raise ValueError("signature does not prove control of the payout address")
+
+    old_address = agent.payout_address
+    changed = bool(old_address) and old_address != candidate
+    agent.payout_address = candidate
+    agent.payout_address_verified = True
+    agent.payout_address_verified_at = _now()
+    agent.payout_challenge = None
+    agent.payout_challenge_address = None
+    agent.payout_challenge_expires_at = None
+    agent.updated_at = _now()
+    session.add(agent)
+    _log_payout_event(
+        session,
+        agent=agent,
+        action="changed" if changed else "registered",
+        old_address=old_address,
+        new_address=candidate,
+        verified=True,
+        actor=actor,
+        note="payout address control proven",
+    )
+    session.commit()
+    session.refresh(agent)
+    return agent
+
+
+def clear_payout_address(
+    session: Session, *, agent: AgentIdentity, actor: str | None = None
+) -> AgentIdentity:
+    """Remove the verified payout destination (audited).
+
+    Settlement reverts to the mint fallback for this agent until a new address
+    is proven, so clearing can never silently misdirect funds.
+    """
+
+    old_address = agent.payout_address
+    agent.payout_address = None
+    agent.payout_address_verified = False
+    agent.payout_address_verified_at = None
+    agent.payout_challenge = None
+    agent.payout_challenge_address = None
+    agent.payout_challenge_expires_at = None
+    agent.updated_at = _now()
+    session.add(agent)
+    _log_payout_event(
+        session,
+        agent=agent,
+        action="cleared",
+        old_address=old_address,
+        actor=actor,
+        note="payout address cleared",
+    )
+    session.commit()
+    session.refresh(agent)
+    return agent
+
+
+def resolve_verified_payout_address(agent: AgentIdentity | None) -> str | None:
+    """The settlement-usable payout address, or ``None`` if not proven.
+
+    The single predicate settlement relies on: only a *verified* address is ever
+    returned, so an unproven or absent address transparently falls back to the
+    mint path inside the ``_resolve_payout_wallet`` seam.
+    """
+
+    if agent is None:
+        return None
+    if agent.payout_address and agent.payout_address_verified:
+        return agent.payout_address
+    return None
+
+
+def payout_history(
+    session: Session, agent: AgentIdentity
+) -> list[PayoutAddressEvent]:
+    """Append-only audit trail of this agent's payout-address lifecycle."""
+
+    return session.exec(
+        select(PayoutAddressEvent)
+        .where(PayoutAddressEvent.agent_id == agent.id)
+        .order_by(PayoutAddressEvent.created_at.desc())
+    ).all()
 
 
 def _recompute_score(agent: AgentIdentity) -> float:
