@@ -43,9 +43,12 @@ def _provision_treasury(session: Session, workspace: Workspace) -> Treasury:
     sign-in. If provisioning fails the treasury exists without a wallet and can
     be provisioned later on demand.
     """
-    treasury = Treasury(workspace_id=workspace.id, provider="circle")
+    # Stamp the treasury with the configured provider's own name rather than a
+    # hardcoded "circle", so the row stays accurate if the settlement provider
+    # is ever swapped.
+    provider = get_settlement_provider()
+    treasury = Treasury(workspace_id=workspace.id, provider=provider.name)
     try:
-        provider = get_settlement_provider()
         wallet: WalletRef = provider.provision_treasury_wallet(workspace.id)
         treasury.provider_wallet_id = wallet.provider_wallet_id
         treasury.address = wallet.address

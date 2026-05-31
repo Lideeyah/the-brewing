@@ -23,8 +23,11 @@ from app.domain import copilot, oracle, registry, validation
 from app.domain import workflow as workflow_domain
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
-from app.domain.settlement.circle_provider import SettlementConfigError
-from app.domain.settlement.provider import EscrowRef, WalletRef
+from app.domain.settlement.provider import (
+    EscrowRef,
+    SettlementConfigError,
+    WalletRef,
+)
 from app.models import (
     AgentIdentity,
     AuditReview,
@@ -1076,7 +1079,7 @@ def settle_subtask(
             quote = quote_settlement_fee(alloc)
             fee = quote.fee_usdc
             net = (alloc - fee).quantize(_USDC_QUANT)
-            payout = provider.provision_treasury_wallet(f"payout-{obj.id}-{role.id}")
+            payout = _resolve_payout_wallet(provider, ref=f"payout-{obj.id}-{role.id}")
             transfer = provider.release_escrow(
                 EscrowRef(
                     provider_escrow_id=escrow.provider_escrow_id or "",
@@ -1617,7 +1620,7 @@ def settle_objective(
             quote = quote_settlement_fee(amount)
             fee = quote.fee_usdc
             net = (amount - fee).quantize(_USDC_QUANT)
-            payout = provider.provision_treasury_wallet(f"payout-{obj.id}")
+            payout = _resolve_payout_wallet(provider, ref=f"payout-{obj.id}")
             release_ref = EscrowRef(
                 provider_escrow_id=escrow.provider_escrow_id or "",
                 address=escrow.address or "",
@@ -1798,10 +1801,24 @@ def settle_objective(
     return _detail(session, obj)
 
 
+# Block-explorer link construction is the one chain-specific concern that has to
+# surface in API responses. Keep it confined to these two helpers (and the
+# constants below) so a settlement-provider/chain swap touches one place instead
+# of every call site that builds a proof link.
+_EXPLORER_BASE = "https://explorer.solana.com"
+_EXPLORER_CLUSTER = "devnet"
+
+
 def _tx_explorer_url(tx_hash: str | None) -> str | None:
     if not tx_hash:
         return None
-    return f"https://explorer.solana.com/tx/{tx_hash}?cluster=devnet"
+    return f"{_EXPLORER_BASE}/tx/{tx_hash}?cluster={_EXPLORER_CLUSTER}"
+
+
+def _address_explorer_url(address: str | None) -> str | None:
+    if not address:
+        return None
+    return f"{_EXPLORER_BASE}/address/{address}?cluster={_EXPLORER_CLUSTER}"
 
 
 def _resolve_tx_hash(tx_ref: str | None, existing: str | None) -> str | None:
@@ -1822,14 +1839,25 @@ def _resolve_tx_hash(tx_ref: str | None, existing: str | None) -> str | None:
         return None
 
 
+def _resolve_payout_wallet(provider, *, ref: str) -> WalletRef:
+    """Resolve the destination wallet a release settles funds into.
+
+    Migration seam — deliberately the only place this decision is made. Today it
+    provisions a fresh provider wallet per settlement, which is a wallet-per-
+    objective artifact (a throwaway destination minted at payout time). The
+    durable model resolves the payee's *registered* wallet — e.g. the assigned
+    agent's persistent payout address — so funds land in a counterparty-owned
+    account and no new wallet is created per settlement. Centralizing it here
+    means that change touches one function, not every settle call site.
+    See docs/payout-destination-decoupling-proposal.md.
+    """
+    return provider.provision_treasury_wallet(ref)
+
+
 def _escrow_out(escrow: EscrowState | None) -> EscrowOut | None:
     if escrow is None:
         return None
-    explorer = (
-        f"https://explorer.solana.com/address/{escrow.address}?cluster=devnet"
-        if escrow.address
-        else None
-    )
+    explorer = _address_explorer_url(escrow.address)
     return EscrowOut(
         id=escrow.id,
         status=escrow.status.value,
@@ -2030,11 +2058,7 @@ def _settlement_out(
 ) -> SettlementOut | None:
     if settlement is None:
         return None
-    explorer = (
-        f"https://explorer.solana.com/address/{payout_address}?cluster=devnet"
-        if payout_address
-        else None
-    )
+    explorer = _address_explorer_url(payout_address)
     return SettlementOut(
         id=settlement.id,
         status=settlement.status.value,
@@ -2207,16 +2231,8 @@ def _onchain_ledger(
         escrow.blockchain if escrow and hasattr(escrow, "blockchain") else None
     )
     treasury_address = treasury.address if treasury else None
-    treasury_explorer = (
-        f"https://explorer.solana.com/address/{treasury_address}?cluster=devnet"
-        if treasury_address
-        else None
-    )
-    escrow_explorer = (
-        f"https://explorer.solana.com/address/{escrow.address}?cluster=devnet"
-        if escrow and escrow.address
-        else None
-    )
+    treasury_explorer = _address_explorer_url(treasury_address)
+    escrow_explorer = _address_explorer_url(escrow.address if escrow else None)
 
     role_title = {r.id: r.title for r in roles}
 
@@ -2299,11 +2315,7 @@ def _onchain_ledger(
                     from_address=escrow.address if escrow else None,
                     to_label="Agent payout wallet",
                     to_address=to_addr,
-                    to_explorer_url=(
-                        f"https://explorer.solana.com/address/{to_addr}?cluster=devnet"
-                        if to_addr
-                        else None
-                    ),
+                    to_explorer_url=_address_explorer_url(to_addr),
                     tx_hash=s.payout_tx_hash,
                     tx_url=_tx_explorer_url(s.payout_tx_hash),
                     tx_ref=s.payout_tx_ref,

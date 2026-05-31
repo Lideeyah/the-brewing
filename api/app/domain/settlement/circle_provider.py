@@ -16,18 +16,21 @@ from app.config import get_settings
 from app.domain.settlement.provider import (
     CUSTODIAL,
     EscrowRef,
+    SettlementConfigError,
     SettlementProvider,
     TransferResult,
     TxProof,
     WalletRef,
 )
 
+# SettlementConfigError is re-exported for backwards compatibility: callers that
+# imported it from this module keep working, but the canonical, provider-neutral
+# definition now lives in app.domain.settlement.provider so the error-handling
+# surface above the boundary never depends on Circle.
+__all__ = ["CircleSettlementProvider", "SettlementConfigError", "USDC_SOL_DEVNET_MINT"]
+
 # USDC mint on Solana devnet (Circle's testnet USDC).
 USDC_SOL_DEVNET_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
-
-
-class SettlementConfigError(RuntimeError):
-    """Raised when Circle credentials are not configured."""
 
 
 def _explorer_url(signature: str | None) -> str | None:

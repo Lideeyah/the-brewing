@@ -13,6 +13,15 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 
+class SettlementConfigError(RuntimeError):
+    """Raised when a settlement provider is not usably configured.
+
+    Chain- and provider-neutral on purpose: the domain catches this without
+    importing any concrete provider, so a provider swap never changes the
+    error-handling surface above the SettlementProvider boundary.
+    """
+
+
 @dataclass(frozen=True)
 class WalletRef:
     """A settlement wallet, identified opaquely by the provider."""
