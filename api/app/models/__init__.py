@@ -53,10 +53,17 @@ class WorkspaceRole(str, Enum):
 
 
 class EscrowStatus(str, Enum):
+    # Transfer submitted to the settlement provider but not yet confirmed
+    # on-chain. Funds are NOT in custody in this state — settlement must never
+    # act on a PENDING escrow.
+    PENDING = "pending"
     LOCKED = "locked"
     RELEASED = "released"
     SLASHED = "slashed"
     DISPUTED = "disputed"
+    # The lock transfer was rejected / failed on-chain; no funds moved into
+    # escrow. Terminal — the objective stays unfunded.
+    FAILED = "failed"
 
 
 class RunStatus(str, Enum):

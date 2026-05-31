@@ -10,6 +10,7 @@ the caller's own workspace.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
@@ -430,6 +431,49 @@ async def structure_objective(
     return _detail(session, obj)
 
 
+# Circle accepts a transfer immediately and returns an internal tx id; the
+# on-chain signature (and the network's verdict) only appear once the transfer
+# confirms. Classify a polled TransactionState into one of three outcomes so the
+# escrow is only ever marked LOCKED after the chain confirms the funds moved.
+_LOCK_CONFIRMED_STATES = {"CONFIRMED", "COMPLETE"}
+_LOCK_FAILED_STATES = {"FAILED", "DENIED", "CANCELLED"}
+
+
+def _await_lock_confirmation(
+    lock_tx_ref: str | None,
+    *,
+    attempts: int = 8,
+    delay_seconds: float = 2.5,
+) -> tuple[str, str | None]:
+    """Poll the settlement provider until the lock transfer resolves.
+
+    Returns ``(outcome, tx_hash)`` where ``outcome`` is one of ``"confirmed"``,
+    ``"failed"`` or ``"pending"``. Funds are only in custody on ``"confirmed"``;
+    the caller must not mark the escrow LOCKED otherwise. Never raises — provider
+    errors are treated as a still-pending result so the escrow stays PENDING and
+    can be re-checked, rather than being falsely promoted to LOCKED.
+    """
+    if not lock_tx_ref:
+        return "pending", None
+    provider = get_settlement_provider()
+    last_hash: str | None = None
+    for attempt in range(attempts):
+        try:
+            proof = provider.get_transaction_proof(lock_tx_ref)
+        except Exception:  # noqa: BLE001 — proof resolution is best-effort
+            proof = None
+        if proof is not None:
+            state = (proof.state or "").upper()
+            last_hash = proof.tx_hash or last_hash
+            if state in _LOCK_CONFIRMED_STATES:
+                return "confirmed", last_hash
+            if state in _LOCK_FAILED_STATES:
+                return "failed", last_hash
+        if attempt < attempts - 1:
+            time.sleep(delay_seconds)
+    return "pending", last_hash
+
+
 @router.post("/{objective_id}/escrow/lock", response_model=ObjectiveDetailOut)
 def lock_objective_escrow(
     objective_id: str,
@@ -491,9 +535,13 @@ def lock_objective_escrow(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         )
 
+    # The transfer has been accepted by the provider but is not yet confirmed
+    # on-chain. Record the escrow as PENDING — funds are not in custody, the
+    # objective does NOT advance, and settlement is barred (it gates on LOCKED)
+    # until the chain confirms the lock.
     escrow = EscrowState(
         objective_id=obj.id,
-        status=EscrowStatus.LOCKED,
+        status=EscrowStatus.PENDING,
         amount_usdc=str(amount),
         provider=provider.name,
         custody_model=provider.custody_model,
@@ -502,16 +550,11 @@ def lock_objective_escrow(
         lock_tx_ref=escrow_ref.lock_tx_ref,
     )
     session.add(escrow)
-
-    obj.status = ObjectiveStatus.ESCROW_LOCKED
-    obj.updated_at = datetime.now(timezone.utc)
-    session.add(obj)
-
     log_event(
         session,
         objective_id=obj.id,
-        kind="escrow.locked",
-        message=f"Locked {amount} USDC from treasury into objective escrow.",
+        kind="escrow.submitted",
+        message=f"Submitted {amount} USDC lock transfer; awaiting on-chain confirmation.",
         actor=user.id,
         data={
             "amount_usdc": str(amount),
@@ -520,8 +563,102 @@ def lock_objective_escrow(
         },
     )
     session.commit()
-    session.refresh(obj)
-    return _detail(session, obj)
+
+    outcome, lock_tx_hash = _await_lock_confirmation(escrow_ref.lock_tx_ref)
+    session.refresh(escrow)
+
+    if outcome == "confirmed":
+        escrow.status = EscrowStatus.LOCKED
+        escrow.lock_tx_hash = lock_tx_hash
+        escrow.updated_at = datetime.now(timezone.utc)
+        session.add(escrow)
+
+        obj.status = ObjectiveStatus.ESCROW_LOCKED
+        obj.updated_at = datetime.now(timezone.utc)
+        session.add(obj)
+
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="escrow.locked",
+            message=f"Locked {amount} USDC from treasury into objective escrow.",
+            actor=user.id,
+            data={
+                "amount_usdc": str(amount),
+                "escrow_address": escrow_ref.address,
+                "lock_tx_ref": escrow_ref.lock_tx_ref,
+                "lock_tx_hash": lock_tx_hash,
+            },
+        )
+        session.commit()
+        session.refresh(obj)
+        return _detail(session, obj)
+
+    if outcome == "failed":
+        # The chain rejected the transfer; no funds moved. Mark the escrow FAILED
+        # and leave the objective at COPILOT_STRUCTURED so it can be re-locked.
+        escrow.status = EscrowStatus.FAILED
+        escrow.lock_tx_hash = lock_tx_hash
+        escrow.updated_at = datetime.now(timezone.utc)
+        session.add(escrow)
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="escrow.failed",
+            message=f"Lock transfer of {amount} USDC failed on-chain; no funds escrowed.",
+            actor=user.id,
+            data={
+                "amount_usdc": str(amount),
+                "escrow_address": escrow_ref.address,
+                "lock_tx_ref": escrow_ref.lock_tx_ref,
+                "lock_tx_hash": lock_tx_hash,
+            },
+        )
+        session.commit()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "error": "escrow_lock_failed",
+                "amount_usdc": str(amount),
+                "lock_tx_ref": escrow_ref.lock_tx_ref,
+                "message": (
+                    "The settlement provider rejected the lock transfer on-chain. "
+                    "No funds were escrowed; the objective remains unfunded."
+                ),
+            },
+        )
+
+    # Still in-flight after the polling window. Leave the escrow PENDING and the
+    # objective unadvanced. The lock can be re-confirmed on a later read; the
+    # objective cannot proceed to execution or settlement until it does.
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="escrow.pending",
+        message=(
+            f"Lock transfer of {amount} USDC is still confirming on-chain; "
+            "escrow remains pending."
+        ),
+        actor=user.id,
+        data={
+            "amount_usdc": str(amount),
+            "escrow_address": escrow_ref.address,
+            "lock_tx_ref": escrow_ref.lock_tx_ref,
+        },
+    )
+    session.commit()
+    raise HTTPException(
+        status_code=status.HTTP_202_ACCEPTED,
+        detail={
+            "error": "escrow_lock_pending",
+            "amount_usdc": str(amount),
+            "lock_tx_ref": escrow_ref.lock_tx_ref,
+            "message": (
+                "The lock transfer was accepted but has not yet confirmed on-chain. "
+                "The escrow is pending; retry shortly to advance the objective."
+            ),
+        },
+    )
 
 
 @router.post("/{objective_id}/execute", response_model=ObjectiveDetailOut)
