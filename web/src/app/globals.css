@@ -44,6 +44,7 @@
 
 html {
   color-scheme: dark;
+  scroll-behavior: smooth;
 }
 
 body {
@@ -70,6 +71,135 @@ body {
 ::selection {
   background: color-mix(in srgb, var(--color-accent) 30%, transparent);
   color: var(--color-foreground);
+}
+
+/*
+  ── Landing motion system ────────────────────────────────────────────────
+  Restrained, continuous, infrastructural. No glow, no bounce. Everything
+  degrades to static under prefers-reduced-motion.
+*/
+
+/* Scroll-reveal: sections rise + fade as they enter the viewport. */
+.reveal {
+  opacity: 0;
+  transform: translateY(18px);
+  transition:
+    opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+.reveal-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* Continuous horizontal stream — the "economy coming alive" ticker. */
+@keyframes stream-left {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+@keyframes stream-right {
+  from {
+    transform: translate3d(-50%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+.stream-mask {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 12%,
+    #000 88%,
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 12%,
+    #000 88%,
+    transparent
+  );
+}
+.stream-track {
+  display: flex;
+  width: max-content;
+  will-change: transform;
+}
+.stream-track-left {
+  animation: stream-left linear infinite;
+}
+.stream-track-right {
+  animation: stream-right linear infinite;
+}
+
+/* Energy traveling along a connector line / network edge. */
+@keyframes flow-dash {
+  to {
+    stroke-dashoffset: -1000;
+  }
+}
+.flow-line {
+  stroke-dasharray: 4 10;
+  animation: flow-dash 22s linear infinite;
+}
+
+/* Slow breathing pulse for status dots and network nodes. */
+@keyframes node-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.node-pulse {
+  animation: node-pulse 3.2s ease-in-out infinite;
+}
+
+/* A single dot tracing the lifecycle rail in section 2. */
+@keyframes rail-travel {
+  0% {
+    left: 0;
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  92% {
+    opacity: 1;
+  }
+  100% {
+    left: 100%;
+    opacity: 0;
+  }
+}
+.rail-traveler {
+  animation: rail-travel 7s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .stream-track-left,
+  .stream-track-right,
+  .flow-line,
+  .node-pulse,
+  .rail-traveler {
+    animation: none;
+  }
 }
 
 /* Custom scrollbar — restrained, operational */

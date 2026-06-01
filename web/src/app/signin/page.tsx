@@ -6,7 +6,13 @@ import { SignInForm } from "@/components/auth/signin-form";
 
 export default async function SignInPage() {
   const session = await auth();
-  if (session?.brewingToken) redirect("/dashboard");
+  if (session?.brewingToken) {
+    redirect(
+      session.workspace?.onboarding_completed === false
+        ? "/onboarding/workspace"
+        : "/dashboard",
+    );
+  }
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">

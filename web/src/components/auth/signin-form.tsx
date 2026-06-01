@@ -4,25 +4,76 @@ import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { ArrowRight, Loader2 } from "lucide-react";
 
+type Intent = "signup" | "login";
+
+// The journey branches on intent, not just the auth provider. Sign Up enters
+// the provisioning sequence (Workspace → Treasury → Orientation); Log In goes
+// straight to Mission Control. The server reconciles intent with real state
+// (onboarding_completed) so the two can never desync — these callbackUrls are
+// the optimistic hint, the layout gate is the enforcement.
+const DEST: Record<Intent, string> = {
+  signup: "/onboarding/workspace",
+  login: "/dashboard",
+};
+
 export function SignInForm() {
+  const [intent, setIntent] = useState<Intent>("signup");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [pending, setPending] = useState<"google" | "email" | null>(null);
 
+  const callbackUrl = DEST[intent];
+  const isSignup = intent === "signup";
+  const verb = isSignup ? "Sign up" : "Log in";
+
   const google = async () => {
     setPending("google");
-    await signIn("google", { callbackUrl: "/dashboard" });
+    await signIn("google", { callbackUrl });
   };
 
   const emailSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.includes("@")) return;
     setPending("email");
-    await signIn("dev-email", { email, name, callbackUrl: "/dashboard" });
+    await signIn("dev-email", { email, name, callbackUrl });
   };
 
   return (
     <div className="space-y-4">
+      {/* Intent toggle — two journeys */}
+      <div className="flex rounded-lg border border-border bg-background p-1">
+        {(["signup", "login"] as Intent[]).map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => setIntent(opt)}
+            disabled={pending !== null}
+            className={`flex-1 rounded-md py-1.5 text-[12px] font-semibold transition-colors disabled:opacity-60 ${
+              intent === opt
+                ? "bg-elevated text-foreground shadow-[inset_0_0_0_1px_var(--color-border-strong)]"
+                : "text-muted hover:text-secondary"
+            }`}
+          >
+            {opt === "signup" ? "Sign up" : "Log in"}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-[12px] leading-relaxed text-secondary">
+        {isSignup ? (
+          <>
+            You&apos;re creating a new operational environment. We&apos;ll
+            provision your identity, workspace and settlement treasury, then walk
+            you through it before Mission Control.
+          </>
+        ) : (
+          <>
+            Welcome back. Sign in to return to your existing operational
+            environment — straight to Mission Control.
+          </>
+        )}
+      </p>
+
       <button
         onClick={google}
         disabled={pending !== null}
@@ -33,7 +84,7 @@ export function SignInForm() {
         ) : (
           <GoogleGlyph />
         )}
-        Continue with Google
+        {verb} with Google
       </button>
 
       <div className="flex items-center gap-3">
@@ -53,13 +104,15 @@ export function SignInForm() {
           onChange={(e) => setEmail(e.target.value)}
           className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-[13px] text-foreground placeholder:text-muted focus:border-border-strong focus:outline-none"
         />
-        <input
-          type="text"
-          placeholder="Name (optional)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-[13px] text-foreground placeholder:text-muted focus:border-border-strong focus:outline-none"
-        />
+        {isSignup && (
+          <input
+            type="text"
+            placeholder="Name (optional)"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border border-border bg-background px-3 py-2.5 text-[13px] text-foreground placeholder:text-muted focus:border-border-strong focus:outline-none"
+          />
+        )}
         <button
           type="submit"
           disabled={pending !== null || !email.includes("@")}
@@ -69,11 +122,15 @@ export function SignInForm() {
             <Loader2 size={15} className="animate-spin" />
           ) : (
             <>
-              Continue with email <ArrowRight size={15} />
+              {verb} with email <ArrowRight size={15} />
             </>
           )}
         </button>
       </form>
+
+      <p className="font-operational text-[10px] leading-relaxed text-muted">
+        {isSignup ? "Next: Workspace → Treasury → Mission Control" : null}
+      </p>
     </div>
   );
 }
