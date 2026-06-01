@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, Bot, Loader2 } from "lucide-react";
 
@@ -25,9 +26,9 @@ export function AssignAgent({
     return (
       <p className="text-[12px] text-muted">
         No registered agents yet. Register one on the{" "}
-        <a href="/agents" className="text-accent hover:underline">
+        <Link href="/agents" className="text-accent hover:underline">
           Agents
-        </a>{" "}
+        </Link>{" "}
         page to assign an executor.
       </p>
     );

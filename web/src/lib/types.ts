@@ -428,7 +428,31 @@ export interface AgentIdentity {
   registry_chain?: string | null;
   registry_address?: string | null;
   signing_pubkey?: string | null;
+  // Payout destination (Escrow V1.5). Only a *verified* address is ever used as
+  // a settlement destination; `payout_address_verified` reflects proof-of-control.
+  payout_address?: string | null;
+  payout_blockchain?: string | null;
+  payout_address_verified: boolean;
+  payout_address_verified_at?: string | null;
   created_at: string;
+}
+
+export interface PayoutAddressEvent {
+  id: string;
+  action: string; // challenge_issued | registered | changed | verification_failed | cleared
+  old_address?: string | null;
+  new_address?: string | null;
+  verified: boolean;
+  actor?: string | null;
+  note?: string | null;
+  created_at: string;
+}
+
+export interface PayoutChallenge {
+  agent_id: string;
+  address: string;
+  challenge: string;
+  expires_at: string;
 }
 
 export interface ReputationDimension {
@@ -442,6 +466,32 @@ export interface ReputationDimension {
 export interface AgentDetail extends AgentIdentity {
   reputation_history: ReputationEvent[];
   trust_dimensions: ReputationDimension[];
+  payout_history: PayoutAddressEvent[];
+}
+
+export interface FeedbackCommitment {
+  id: string;
+  agent_id: string;
+  objective_id: string;
+  objective_title?: string | null;
+  commitment_hash: string;
+  signature: string;
+  revealed: boolean;
+  outcome?: string | null; // "success" | "failure", set only at reveal
+  created_at: string;
+  revealed_at?: string | null;
+}
+
+export interface FeedbackObjectiveOption {
+  id: string;
+  title: string;
+  status: string;
+  committed: boolean;
+}
+
+export interface AgentFeedback {
+  commitments: FeedbackCommitment[];
+  objectives: FeedbackObjectiveOption[];
 }
 
 export interface TrustScore {
@@ -501,4 +551,30 @@ export interface Kpis {
   total_settlements: number;
   fees_collected_usdc: string;
   metrics: KpiMetric[];
+}
+
+export interface MeUser {
+  id: string;
+  email: string;
+  name?: string | null;
+  image?: string | null;
+}
+
+export interface MeWorkspace {
+  id: string;
+  name: string;
+  org_name?: string | null;
+  operational_type?: string | null;
+  subscription_tier: string;
+  onboarding_completed: boolean;
+  governance_require_auditor: boolean;
+  governance_human_authoritative: boolean;
+  treasury_address?: string | null;
+  treasury_blockchain?: string | null;
+}
+
+export interface Me {
+  user: MeUser;
+  workspace: MeWorkspace;
+  role: string;
 }

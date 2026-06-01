@@ -5,8 +5,12 @@ import { revalidatePath } from "next/cache";
 
 import { ApiError, apiGet, apiPatch, apiPost } from "@/lib/api";
 import type {
+  AgentDetail,
   AgentIdentity,
+  FeedbackCommitment,
+  MeWorkspace,
   ObjectiveDetail,
+  PayoutChallenge,
   TrustScore,
 } from "@/lib/types";
 
@@ -344,6 +348,108 @@ export async function lookupTrust(tokenId: string): Promise<TrustLookupResult> {
   }
 }
 
+/** Result shape for issuing a payout proof-of-control challenge. */
+export type PayoutChallengeResult =
+  | { ok: true; challenge: PayoutChallenge }
+  | { ok: false; message: string };
+
+/**
+ * Escrow V1.5: issue a proof-of-control challenge for a candidate payout
+ * address. The agent's wallet must sign the returned `challenge` string with the
+ * payout wallet's private key; the signature is then submitted to verifyPayout.
+ * Until that succeeds the address is never used as a settlement destination.
+ */
+export async function requestPayoutChallenge(
+  agentId: string,
+  address: string,
+  blockchain?: string,
+): Promise<PayoutChallengeResult> {
+  const addr = address.trim();
+  if (!addr) return { ok: false, message: "Enter a payout wallet address." };
+  try {
+    const challenge = await apiPost<PayoutChallenge>(
+      `/agents/${agentId}/payout/challenge`,
+      { address: addr, blockchain: blockchain?.trim() || undefined },
+    );
+    return { ok: true, challenge };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/**
+ * Escrow V1.5: verify the signed challenge and bind the proven payout address.
+ * On success the address becomes the agent's verified settlement destination and
+ * the change is recorded in the payout audit trail.
+ */
+export async function verifyPayoutAddress(
+  agentId: string,
+  signature: string,
+): Promise<LifecycleResult> {
+  const sig = signature.trim();
+  if (!sig) return { ok: false, message: "Paste the wallet signature." };
+  try {
+    await apiPost<AgentDetail>(`/agents/${agentId}/payout/verify`, {
+      signature: sig,
+    });
+    revalidatePath(`/agents/${agentId}`);
+    revalidatePath("/agents");
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+export type FeedbackResult =
+  | { ok: true; commitment: FeedbackCommitment }
+  | { ok: false; message: string };
+
+/**
+ * Blind-signature feedback — commit: bind the agent to its evaluation feedback
+ * for one objective *before* the outcome is revealed. The signature is captured
+ * now, so the agent cannot decline once it sees a negative result.
+ */
+export async function commitFeedback(
+  agentId: string,
+  objectiveId: string,
+): Promise<FeedbackResult> {
+  if (!objectiveId) return { ok: false, message: "Select an objective." };
+  try {
+    const commitment = await apiPost<FeedbackCommitment>(
+      `/agents/${agentId}/feedback/commit`,
+      { objective_id: objectiveId },
+    );
+    revalidatePath(`/agents/${agentId}`);
+    return { ok: true, commitment };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
+/**
+ * Blind-signature feedback — reveal: disclose the committed outcome and fold it
+ * into the agent's reputation. The pre-reveal signature is re-verified, so the
+ * feedback is provably the one bound at commit time.
+ */
+export async function revealFeedback(
+  agentId: string,
+  commitmentId: string,
+  success: boolean,
+  note?: string,
+): Promise<FeedbackResult> {
+  if (!commitmentId) return { ok: false, message: "Missing commitment." };
+  try {
+    const commitment = await apiPost<FeedbackCommitment>(
+      `/agents/${agentId}/feedback/reveal`,
+      { commitment_id: commitmentId, success, note: note?.trim() || undefined },
+    );
+    revalidatePath(`/agents/${agentId}`);
+    return { ok: true, commitment };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}
+
 /**
  * Escrow: lock the recommended USDC budget from the workspace treasury into the
  * objective's escrow. Surfaces the API's structured 409 (e.g. insufficient
@@ -381,4 +487,40 @@ export async function lockEscrow(objectiveId: string): Promise<LockEscrowResult>
     }
     return { ok: false, message: "Failed to lock escrow." };
   }
+}
+
+// --- Onboarding (first-run journey) ----------------------------------------
+
+/** Onboarding Step 2 — name the workspace + set governance defaults, then
+ *  advance to Treasury Initialization. */
+export async function updateWorkspace(formData: FormData) {
+  const name = (formData.get("name") as string | null)?.trim() || undefined;
+  const org_name =
+    (formData.get("org_name") as string | null)?.trim() || undefined;
+  const operational_type =
+    (formData.get("operational_type") as string | null)?.trim() || undefined;
+  const governance_require_auditor =
+    formData.get("governance_require_auditor") === "on";
+  const governance_human_authoritative =
+    formData.get("governance_human_authoritative") === "on";
+
+  await apiPatch<MeWorkspace>("/workspaces/current", {
+    name,
+    org_name,
+    operational_type,
+    governance_require_auditor,
+    governance_human_authoritative,
+  });
+  revalidatePath("/onboarding/treasury");
+  redirect("/onboarding/treasury");
+}
+
+/** Onboarding Step 3 — activate the treasury (the gate that opens Mission
+ *  Control), then continue to the one-time orientation. */
+export async function activateOnboarding() {
+  await apiPost<MeWorkspace>("/workspaces/current/activate");
+  // The onboarding gate is now satisfied; refresh the guarded surfaces.
+  revalidatePath("/dashboard");
+  revalidatePath("/onboarding/orientation");
+  redirect("/onboarding/orientation");
 }

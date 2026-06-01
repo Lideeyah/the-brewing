@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Bot, ShieldCheck, Wallet } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
@@ -122,7 +123,8 @@ export default async function AgentsPage() {
 
 function AgentCard({ agent }: { agent: AgentIdentity }) {
   return (
-    <Panel>
+    <Link href={`/agents/${agent.id}`} className="block">
+      <Panel className="transition-colors hover:border-border-strong">
       <PanelBody className="space-y-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -240,7 +242,8 @@ function AgentCard({ agent }: { agent: AgentIdentity }) {
           )}
         </div>
       </PanelBody>
-    </Panel>
+      </Panel>
+    </Link>
   );
 }
 

@@ -228,9 +228,12 @@ export default async function ObjectiveDetailPage({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-[14px] font-medium text-foreground">
+                        <Link
+                          href={`/agents/${assignedAgent.id}`}
+                          className="text-[14px] font-medium text-foreground hover:text-accent hover:underline"
+                        >
                           {assignedAgent.name}
-                        </span>
+                        </Link>
                         {assignedAgent.rated ? (
                           <StatusPill tone="success">rated</StatusPill>
                         ) : (
