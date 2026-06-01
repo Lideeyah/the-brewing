@@ -1,0 +1,41 @@
+# Render Blueprint — Brewing API (FastAPI).
+# Deploys the Docker image in api/ as a managed web service.
+# Secrets (sync: false) are set in the Render dashboard, never committed.
+services:
+  - type: web
+    name: brewing-api
+    runtime: docker
+    dockerfilePath: ./api/Dockerfile
+    dockerContext: ./api
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Non-secret config — safe to keep in the blueprint.
+      - key: ENVIRONMENT
+        value: production
+      - key: SESSION_ALGORITHM
+        value: HS256
+      - key: COPILOT_MODEL
+        value: claude-opus-4-7
+      - key: ORCHESTRATION_PACEMAKER_SECONDS
+        value: "3.5"
+      - key: SETTLEMENT_PROVIDER
+        value: circle
+      - key: CIRCLE_BLOCKCHAIN
+        value: SOL-DEVNET
+      # Secrets / environment-specific — set these in the Render dashboard.
+      - key: DATABASE_URL          # Neon pooled connection string
+        sync: false
+      - key: SESSION_SECRET        # MUST match the web app's SESSION_SECRET
+        sync: false
+      - key: WEB_ORIGIN            # deployed Vercel origin, no trailing slash
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CIRCLE_API_KEY
+        sync: false
+      - key: CIRCLE_ENTITY_SECRET
+        sync: false
+      - key: CIRCLE_WALLET_SET_ID
+        sync: false
