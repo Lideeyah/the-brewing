@@ -45,6 +45,9 @@ def _workspace_out(workspace: Workspace, treasury: Treasury | None) -> Workspace
         org_name=workspace.org_name,
         operational_type=workspace.operational_type,
         subscription_tier=workspace.subscription_tier,
+        onboarding_completed=workspace.onboarding_completed,
+        governance_require_auditor=workspace.governance_require_auditor,
+        governance_human_authoritative=workspace.governance_human_authoritative,
         treasury_address=treasury.address if treasury else None,
         treasury_blockchain=treasury.blockchain if treasury else None,
     )
@@ -56,7 +59,7 @@ def exchange_session(
     session: Session = Depends(get_session),
     _: None = Depends(require_web_secret),
 ) -> SessionOut:
-    user = workspace_service.upsert_user(
+    user, is_new_account = workspace_service.upsert_user(
         session, email=body.email, name=body.name, image=body.image
     )
     workspace = workspace_service.get_or_create_default_workspace(session, user)
@@ -71,6 +74,7 @@ def exchange_session(
         user=UserOut(id=user.id, email=user.email, name=user.name, image=user.image),
         workspace=_workspace_out(workspace, treasury),
         role=role,
+        is_new_account=is_new_account,
     )
 
 

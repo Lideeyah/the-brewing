@@ -18,13 +18,18 @@ from app.models import Membership, Treasury, User, Workspace, WorkspaceRole
 logger = logging.getLogger("brewing.workspace")
 
 
-def upsert_user(session: Session, *, email: str, name: str | None, image: str | None) -> User:
+def upsert_user(
+    session: Session, *, email: str, name: str | None, image: str | None
+) -> tuple[User, bool]:
+    """Return ``(user, is_new)``. ``is_new`` distinguishes a first-ever sign-in
+    (account creation) from a returning sign-in — the signal the web app uses to
+    branch the Sign Up vs Log In journey."""
     user = session.exec(select(User).where(User.email == email)).first()
     if user is None:
         user = User(email=email, name=name, image=image)
         session.add(user)
         session.flush()
-        return user
+        return user, True
     # Keep profile fields fresh from the identity provider.
     changed = False
     if name and user.name != name:
@@ -33,7 +38,7 @@ def upsert_user(session: Session, *, email: str, name: str | None, image: str | 
         user.image, changed = image, True
     if changed:
         session.add(user)
-    return user
+    return user, False
 
 
 def _provision_treasury(session: Session, workspace: Workspace) -> Treasury:

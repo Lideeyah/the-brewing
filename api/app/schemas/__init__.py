@@ -41,8 +41,22 @@ class WorkspaceOut(BaseModel):
     org_name: str | None = None
     operational_type: str | None = None
     subscription_tier: str = "free"
+    onboarding_completed: bool = False
+    governance_require_auditor: bool = True
+    governance_human_authoritative: bool = True
     treasury_address: str | None = None
     treasury_blockchain: str | None = None
+
+
+class WorkspaceUpdateIn(BaseModel):
+    """Onboarding Workspace Initialization — name the operational environment
+    and set its governance defaults. All fields optional/idempotent."""
+
+    name: str | None = None
+    org_name: str | None = None
+    operational_type: str | None = None
+    governance_require_auditor: bool | None = None
+    governance_human_authoritative: bool | None = None
 
 
 class SessionOut(BaseModel):
@@ -50,6 +64,10 @@ class SessionOut(BaseModel):
     user: UserOut
     workspace: WorkspaceOut
     role: WorkspaceRole
+    # First-ever sign-in for this identity — drives the Sign Up vs Log In
+    # journey on the web side. The onboarding gate (workspace.onboarding_completed)
+    # remains the server-side source of truth for routing.
+    is_new_account: bool = False
 
 
 class MeOut(BaseModel):
@@ -621,12 +639,37 @@ class FeedbackCommitmentOut(BaseModel):
     id: str
     agent_id: str
     objective_id: str
+    objective_title: str | None = None  # resolved for readable display
     commitment_hash: str
     signature: str
     revealed: bool
     outcome: str | None = None
     created_at: datetime
     revealed_at: datetime | None = None
+
+
+class FeedbackObjectiveOption(BaseModel):
+    """An objective the agent contributed to — a candidate for feedback.
+
+    Surfaced so the commit step can present a pick-list instead of asking for a
+    raw objective id. ``committed`` marks ones that already carry a commitment.
+    """
+
+    id: str
+    title: str
+    status: str
+    committed: bool
+
+
+class AgentFeedbackOut(BaseModel):
+    """Read model for the blind-signature feedback flow on one agent.
+
+    ``commitments`` is the audit trail (committed and revealed); ``objectives``
+    is the pick-list of associated objectives still available to commit on.
+    """
+
+    commitments: list[FeedbackCommitmentOut]
+    objectives: list[FeedbackObjectiveOption]
 
 
 class FeedbackRevealIn(BaseModel):

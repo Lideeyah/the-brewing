@@ -24,10 +24,12 @@ from app.models import (
 )
 from app.schemas import (
     AgentDetailOut,
+    AgentFeedbackOut,
     AgentIdentityOut,
     AgentRegisterIn,
     FeedbackCommitIn,
     FeedbackCommitmentOut,
+    FeedbackObjectiveOption,
     FeedbackRevealIn,
     PayoutAddressEventOut,
     PayoutChallengeIn,
@@ -107,11 +109,14 @@ def _event_out(ev: ReputationEvent) -> ReputationEventOut:
     )
 
 
-def _commitment_out(c: FeedbackCommitment) -> FeedbackCommitmentOut:
+def _commitment_out(
+    c: FeedbackCommitment, objective_title: str | None = None
+) -> FeedbackCommitmentOut:
     return FeedbackCommitmentOut(
         id=c.id,
         agent_id=c.agent_id,
         objective_id=c.objective_id,
+        objective_title=objective_title,
         commitment_hash=c.commitment_hash,
         signature=c.signature,
         revealed=c.revealed,
@@ -265,6 +270,60 @@ def verify_payout_address(
     )
 
 
+@router.get("/{agent_id}/feedback", response_model=AgentFeedbackOut)
+def list_feedback(
+    agent_id: str,
+    workspace: Workspace = Depends(current_workspace),
+    session: Session = Depends(get_session),
+) -> AgentFeedbackOut:
+    """Read model for the blind-signature feedback flow.
+
+    Returns the agent's commitment audit trail (committed + revealed) plus the
+    pick-list of associated objectives still available to commit feedback on, so
+    the UI never has to ask for a raw objective id.
+    """
+    agent = _get_owned_agent(session, workspace, agent_id)
+
+    commitments = session.exec(
+        select(FeedbackCommitment)
+        .where(FeedbackCommitment.agent_id == agent.id)
+        .order_by(FeedbackCommitment.created_at.desc())
+    ).all()
+
+    # Resolve objective titles in one pass for readable display.
+    associated = registry.associated_objective_ids(session, agent)
+    needed_ids = associated | {c.objective_id for c in commitments}
+    titles: dict[str, Objective] = {}
+    if needed_ids:
+        rows = session.exec(
+            select(Objective).where(Objective.id.in_(needed_ids))
+        ).all()
+        titles = {o.id: o for o in rows}
+
+    committed_ids = {c.objective_id for c in commitments}
+    options = [
+        FeedbackObjectiveOption(
+            id=o.id,
+            title=o.title,
+            status=str(getattr(o.status, "value", o.status)),
+            committed=o.id in committed_ids,
+        )
+        for oid in associated
+        if (o := titles.get(oid)) is not None
+    ]
+    options.sort(key=lambda x: (x.committed, x.title.lower()))
+
+    return AgentFeedbackOut(
+        commitments=[
+            _commitment_out(
+                c, titles[c.objective_id].title if c.objective_id in titles else None
+            )
+            for c in commitments
+        ],
+        objectives=options,
+    )
+
+
 @router.post("/{agent_id}/feedback/commit", response_model=FeedbackCommitmentOut)
 def commit_feedback(
     agent_id: str,
@@ -281,7 +340,7 @@ def commit_feedback(
     commitment = registry.commit_feedback(
         session, agent=agent, objective_id=body.objective_id
     )
-    return _commitment_out(commitment)
+    return _commitment_out(commitment, obj.title)
 
 
 @router.post("/{agent_id}/feedback/reveal", response_model=FeedbackCommitmentOut)
@@ -307,4 +366,5 @@ def reveal_feedback(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
-    return _commitment_out(commitment)
+    obj = session.get(Objective, commitment.objective_id)
+    return _commitment_out(commitment, obj.title if obj else None)

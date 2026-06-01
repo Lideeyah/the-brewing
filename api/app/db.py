@@ -60,6 +60,12 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     },
     "workspace": {
         "subscription_tier": "VARCHAR NOT NULL DEFAULT 'free'",
+        # Existing workspaces are already operational, so backfill them as
+        # completed (DEFAULT 1). Brand-new rows inserted by SQLModel use the
+        # model default (False) and are routed through onboarding.
+        "onboarding_completed": "BOOLEAN NOT NULL DEFAULT 1",
+        "governance_require_auditor": "BOOLEAN NOT NULL DEFAULT 1",
+        "governance_human_authoritative": "BOOLEAN NOT NULL DEFAULT 1",
     },
     "workflowrole": {
         "outcome": "VARCHAR",

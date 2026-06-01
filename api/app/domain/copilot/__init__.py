@@ -52,6 +52,10 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
      "currency": "USDC",
      "release_condition": short string describing what triggers settlement
   },
+  // Brewing pilots settle on a devnet USDC treasury funded from a faucet
+  // (~20 USDC). Keep recommended_escrow_usdc small and devnet-realistic:
+  // scale it to the work, typically 10-100 USDC, and never propose hundreds
+  // or thousands. It must be an amount a faucet-funded treasury could lock.
   "orchestration_plan": {
      "steps": [ {"title": short step title, "detail": one sentence} ]  // 3-6 steps
   },

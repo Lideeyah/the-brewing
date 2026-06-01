@@ -545,6 +545,12 @@ def reveal_feedback(
     return commitment
 
 
+def associated_objective_ids(session: Session, agent: AgentIdentity) -> set[str]:
+    """Public accessor: every objective id this agent contributed to."""
+
+    return _associated_objective_ids(session, agent)
+
+
 def _associated_objective_ids(session: Session, agent: AgentIdentity) -> set[str]:
     """Every objective the agent contributed to — as executor or via a role."""
 

@@ -112,6 +112,14 @@ class Workspace(SQLModel, table=True):
     owner_id: str = Field(foreign_key="user.id", index=True)
     # SaaS plan gating governance-dashboard access. Volume fees apply on top.
     subscription_tier: str = "free"
+    # First-run onboarding gate. New workspaces start False and are walked
+    # through Workspace + Treasury initialization before Mission Control opens.
+    # Existing rows are backfilled True (already operational) — see app.db.
+    onboarding_completed: bool = Field(default=False)
+    # Governance defaults captured during onboarding; applied when the Copilot
+    # structures an objective.
+    governance_require_auditor: bool = Field(default=True)
+    governance_human_authoritative: bool = Field(default=True)
     created_at: datetime = Field(default_factory=_now)
 
 
