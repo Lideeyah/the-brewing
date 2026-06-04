@@ -93,10 +93,32 @@ class CircleSettlementProvider(SettlementProvider):
             blockchain=getattr(wallet.blockchain, "value", str(wallet.blockchain)),
         )
 
+    def _ensure_destination_ata(self, destination_address: str) -> None:
+        """Pre-create the destination's USDC token account if configured.
+
+        Circle's paymaster won't create ATAs, so a deposit into a fresh wallet
+        fails (PAYMASTER_SOL_ATA_CREATION_NOT_ALLOWED). We create it ourselves
+        with a funded payer first. Best-effort: a no-op if unconfigured, and any
+        failure is swallowed so the Circle transfer still proceeds.
+        """
+        s = self.settings
+        if not s.ata_funder_secret:
+            return
+        from app.domain.settlement.solana_ata import ensure_usdc_ata
+
+        ensure_usdc_ata(
+            destination_address,
+            mint=USDC_SOL_DEVNET_MINT,
+            rpc_url=s.solana_rpc_url,
+            payer_secret=s.ata_funder_secret,
+        )
+
     def _transfer(
         self, source: WalletRef, destination_address: str, amount: Decimal, ref_id: str
     ) -> TransferResult:
         """Move USDC from a source wallet to a destination address."""
+        # Ensure the destination can receive USDC before Circle deposits into it.
+        self._ensure_destination_ata(destination_address)
         client = self._client_or_raise()
         dcw = self._dcw
         api = dcw.TransactionsApi(client)

@@ -14,6 +14,7 @@ _BACKFILL_FIELDS = (
     "circle_api_key",
     "circle_entity_secret",
     "circle_wallet_set_id",
+    "ata_funder_secret",
 )
 
 
@@ -63,6 +64,12 @@ class Settings(BaseSettings):
     circle_wallet_set_id: str = ""
     # USDC on Solana devnet via Circle DCW
     circle_blockchain: str = "SOL-DEVNET"
+
+    # ATA pre-creation workaround. Circle's paymaster won't create destination
+    # token accounts, so we create them ourselves with a funded devnet payer
+    # (base58 secret) before depositing USDC. Blank = workaround disabled.
+    ata_funder_secret: str = ""
+    solana_rpc_url: str = "https://api.devnet.solana.com"
 
     @property
     def is_production(self) -> bool:

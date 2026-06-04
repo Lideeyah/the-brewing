@@ -9,3 +9,5 @@ anthropic==0.42.0
 circle-developer-controlled-wallets==9.6.0
 httpx==0.28.1
 python-multipart==0.0.20
+# Solana ATA pre-creation workaround for Circle's gated paymaster (settlement).
+solana==0.36.12
