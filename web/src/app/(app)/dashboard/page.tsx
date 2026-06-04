@@ -48,7 +48,7 @@ export default async function DashboardPage() {
             <Panel key={m.label} className="bg-surface">
               <PanelBody className="p-4">
                 {m.hint && (
-                  <div className="flex items-start justify-end">
+                  <div className="flex items-start justify-start">
                     <span className="font-operational text-[10px] uppercase tracking-wider text-muted">
                       {m.hint}
                     </span>
