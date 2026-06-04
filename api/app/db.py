@@ -8,13 +8,19 @@ from app.config import get_settings
 settings = get_settings()
 
 # SQLite needs check_same_thread=False for the threaded dev server.
-connect_args = (
-    {"check_same_thread": False}
-    if settings.database_url.startswith("sqlite")
-    else {}
-)
+_is_sqlite = settings.database_url.startswith("sqlite")
+connect_args = {"check_same_thread": False} if _is_sqlite else {}
 
-engine = create_engine(settings.database_url, echo=False, connect_args=connect_args)
+# On managed/serverless Postgres (Neon) the compute auto-suspends when idle, so
+# a pooled connection can be silently dropped between requests — the first query
+# after a lull then raises OperationalError (sqlalche.me/e/20/e3q8). pool_pre_ping
+# issues a lightweight liveness check and transparently reconnects; pool_recycle
+# proactively retires connections before Neon's idle timeout closes them.
+_pg_kwargs = {} if _is_sqlite else {"pool_pre_ping": True, "pool_recycle": 280}
+
+engine = create_engine(
+    settings.database_url, echo=False, connect_args=connect_args, **_pg_kwargs
+)
 
 # Additive, idempotent column backfills for tables that predate a field. Keeps
 # the dev SQLite DB (which holds real provisioned treasury wallets) intact
