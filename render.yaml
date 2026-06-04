@@ -5,8 +5,7 @@ services:
   - type: web
     name: brewing-api
     runtime: docker
-    dockerfilePath: ./api/Dockerfile
-    dockerContext: ./api
+    dockerfilePath: ./Dockerfile
     plan: free
     healthCheckPath: /health
     autoDeploy: true

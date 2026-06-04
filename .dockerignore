@@ -1,0 +1,15 @@
+# Keep the build context small and never ship secrets or the local wallet DB.
+web/
+docs/
+.git/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/.env
+**/.env.*
+**/*.db
+**/*.sqlite3
+**/*.dat
+**/node_modules/
+**/.next/
+.DS_Store
