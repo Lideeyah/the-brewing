@@ -6,7 +6,7 @@ import { Topbar } from "@/components/app/topbar";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { apiGet } from "@/lib/api";
-import type { Overview } from "@/lib/types";
+import type { MeWorkspace, Overview } from "@/lib/types";
 
 function prettyNetwork(value?: string | null): string {
   if (value === "SOL-DEVNET") return "Solana Devnet";
@@ -18,16 +18,24 @@ export default async function TreasuryPage() {
   const session = await auth();
   const workspace = session?.workspace;
 
-  let overview: Overview | null = null;
-  try {
-    overview = await apiGet<Overview>("/workspaces/current/overview");
-  } catch {
-    overview = null;
-  }
+  // Fetch both fresh from the API. The treasury address is read from the live
+  // workspace record — NOT the session JWT, which is cached at sign-in and goes
+  // stale the moment a wallet is provisioned after a user's first login.
+  const [overviewResult, currentResult] = await Promise.allSettled([
+    apiGet<Overview>("/workspaces/current/overview"),
+    apiGet<MeWorkspace>("/workspaces/current"),
+  ]);
+  const overview =
+    overviewResult.status === "fulfilled" ? overviewResult.value : null;
+  const current =
+    currentResult.status === "fulfilled" ? currentResult.value : null;
 
   const balance = overview?.treasury_balance_usdc ?? "0";
-  const address = workspace?.treasury_address ?? null;
-  const network = prettyNetwork(workspace?.treasury_blockchain);
+  const address =
+    current?.treasury_address ?? workspace?.treasury_address ?? null;
+  const network = prettyNetwork(
+    current?.treasury_blockchain ?? workspace?.treasury_blockchain,
+  );
   const metrics = overview?.metrics ?? [];
 
   return (
