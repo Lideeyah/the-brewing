@@ -163,6 +163,18 @@ body {
   animation: node-pulse 3.2s ease-in-out infinite;
 }
 
+/* Slow coordination ring around the network hub. */
+@keyframes spin-slow {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.hub-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: spin-slow 48s linear infinite;
+}
+
 /* A single dot tracing the lifecycle rail in section 2. */
 @keyframes rail-travel {
   0% {
@@ -197,6 +209,7 @@ body {
   .stream-track-right,
   .flow-line,
   .node-pulse,
+  .hub-ring,
   .rail-traveler {
     animation: none;
   }
