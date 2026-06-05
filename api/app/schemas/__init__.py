@@ -82,6 +82,10 @@ class MeOut(BaseModel):
 class ObjectiveCreate(BaseModel):
     intent: str
     title: str | None = None
+    # Optional operator-set budget in USDC. When provided it becomes the escrow
+    # amount and the Copilot structures the workflow within it; when omitted the
+    # Copilot recommends a budget at structure time.
+    budget_usdc: str | None = None
 
 
 class GovernanceEventOut(BaseModel):

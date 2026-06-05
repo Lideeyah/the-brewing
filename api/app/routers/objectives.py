@@ -154,12 +154,32 @@ def create_objective(
         )
     title = (body.title or intent.split("\n")[0])[:120].strip()
 
+    # Optional operator-set budget. Stored as the escrow amount so the Copilot
+    # structures the workflow within it (see structure step); blank = let the
+    # Copilot recommend one.
+    escrow_amount = "0"
+    if body.budget_usdc is not None and str(body.budget_usdc).strip():
+        try:
+            budget = Decimal(str(body.budget_usdc).strip()).quantize(Decimal("0.000001"))
+        except (InvalidOperation, ValueError):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Budget must be a valid USDC amount.",
+            )
+        if budget <= 0:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Budget must be greater than zero.",
+            )
+        escrow_amount = str(budget)
+
     obj = Objective(
         workspace_id=workspace.id,
         created_by=user.id,
         title=title,
         intent=intent,
         status=ObjectiveStatus.DRAFT,
+        escrow_amount_usdc=escrow_amount,
     )
     session.add(obj)
     session.flush()
@@ -395,9 +415,16 @@ async def structure_objective(
     obj.sla_config = structured.get("sla_config", {})
     obj.settlement_config = structured.get("settlement_config", {})
     obj.orchestration_plan = structured.get("orchestration_plan", {})
-    obj.escrow_amount_usdc = str(
-        obj.settlement_config.get("recommended_escrow_usdc", obj.escrow_amount_usdc)
-    )
+    # Honour an operator-set budget; only fall back to the Copilot's
+    # recommendation when no explicit budget was provided at creation.
+    try:
+        operator_budget = Decimal(obj.escrow_amount_usdc or "0")
+    except InvalidOperation:
+        operator_budget = Decimal("0")
+    if operator_budget <= 0:
+        obj.escrow_amount_usdc = str(
+            obj.settlement_config.get("recommended_escrow_usdc", obj.escrow_amount_usdc)
+        )
     obj.status = ObjectiveStatus.COPILOT_STRUCTURED
     obj.updated_at = datetime.now(timezone.utc)
     session.add(obj)
