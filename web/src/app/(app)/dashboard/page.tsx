@@ -4,6 +4,7 @@ import { ArrowUpRight, Sparkles } from "lucide-react";
 import { Topbar } from "@/components/app/topbar";
 import { LifecyclePipeline } from "@/components/app/lifecycle-pipeline";
 import { NonCustodialNote } from "@/components/app/non-custodial-note";
+import { QuickCoordinate } from "@/components/app/quick-coordinate";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { apiGet } from "@/lib/api";
@@ -42,6 +43,14 @@ export default async function DashboardPage() {
       <Topbar title="Mission Control" breadcrumb="brewing / operations" />
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
+        {/* Quick coordinate launcher — start an objective + set its budget here */}
+        <Panel className="mb-4 bg-surface">
+          <PanelHeader title="New objective" meta="set budget → coordinate" />
+          <PanelBody>
+            <QuickCoordinate />
+          </PanelBody>
+        </Panel>
+
         {/* Operational metrics */}
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {metrics.map((m) => (
