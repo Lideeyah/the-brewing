@@ -474,3 +474,86 @@ async def structure_intent(intent: str, title: str | None = None) -> dict:
         fallback = _heuristic_structure(intent, title)
         fallback["_source"] = "heuristic_fallback"
         return fallback
+
+
+_DELIVERABLE_SYSTEM = (
+    "You are an expert execution agent in a governed coordination network. You "
+    "produce the finished, client-ready work product an objective asked for — "
+    "not a plan, not a description of how you'd do it, the actual deliverable. "
+    "Write in clean Markdown, be specific and substantive, and satisfy the "
+    "stated definition of done."
+)
+
+
+def _heuristic_deliverable(
+    intent: str, title: str | None, definition_of_done: str | None
+) -> dict:
+    """Deterministic deliverable used when the model is unavailable."""
+    lines = [
+        f"# {title or 'Deliverable'}",
+        "",
+        "## Summary",
+        f"Work product coordinated for the objective: {intent}",
+    ]
+    if definition_of_done:
+        lines += ["", "## Acceptance criteria", definition_of_done]
+    lines += [
+        "",
+        "## Result",
+        "This run was coordinated and recorded by the orchestration layer. "
+        "Enable the Coordination model (or connect a live executing agent) to "
+        "produce full deliverable content here.",
+    ]
+    return {"content": "\n".join(lines), "_source": "heuristic"}
+
+
+async def generate_deliverable(
+    intent: str,
+    title: str | None = None,
+    *,
+    definition_of_done: str | None = None,
+    deadline: str | None = None,
+    roles: list[str] | None = None,
+) -> dict:
+    """Produce the actual deliverable an objective asked for.
+
+    Returns {content, _source}. Always degrades to a deterministic heuristic so
+    execution never hard-fails on a missing key or low credit balance.
+    """
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        return _heuristic_deliverable(intent, title, definition_of_done)
+
+    try:
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        parts = [f"Objective: {title or intent}", f"\nIntent:\n{intent}"]
+        if roles:
+            parts.append("\nCoordinated by roles: " + ", ".join(roles))
+        if definition_of_done:
+            parts.append(f"\nDefinition of done (must be satisfied):\n{definition_of_done}")
+        if deadline:
+            parts.append(f"\nDeadline / timeframe: {deadline}")
+        parts.append("\nProduce the complete deliverable now, in Markdown.")
+        user_msg = "\n".join(parts)
+
+        async with _pacemaker:
+            await asyncio.sleep(settings.orchestration_pacemaker_seconds)
+            resp = await client.messages.create(
+                model=settings.copilot_model,
+                max_tokens=2200,
+                system=_DELIVERABLE_SYSTEM,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+        text = "".join(
+            block.text for block in resp.content if getattr(block, "type", None) == "text"
+        ).strip()
+        if not text:
+            raise ValueError("empty deliverable")
+        return {"content": text, "_source": settings.copilot_model}
+    except Exception as exc:  # noqa: BLE001 — never let execution hard-fail
+        logger.warning("Copilot deliverable generation fell back to heuristic: %s", exc)
+        fallback = _heuristic_deliverable(intent, title, definition_of_done)
+        fallback["_source"] = "heuristic_fallback"
+        return fallback

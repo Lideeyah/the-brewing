@@ -140,6 +140,7 @@ class ExecutionRunOut(BaseModel):
     status: str
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    deliverable: str | None = None
     steps: list[ExecutionStepOut]
 
 

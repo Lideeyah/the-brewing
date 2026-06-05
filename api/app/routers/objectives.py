@@ -694,7 +694,7 @@ def lock_objective_escrow(
 
 
 @router.post("/{objective_id}/execute", response_model=ObjectiveDetailOut)
-def execute_objective(
+async def execute_objective(
     objective_id: str,
     user: User = Depends(get_current_user),
     workspace: Workspace = Depends(current_workspace),
@@ -719,12 +719,30 @@ def execute_objective(
     if not plan_steps:
         plan_steps = [{"title": "Fulfill objective", "detail": obj.title}]
 
+    # Produce the actual deliverable the objective asked for (Claude-backed,
+    # heuristic fallback). This is what the operator reads as "the result".
+    roles = [
+        r.title
+        for r in session.exec(
+            select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+        ).all()
+    ]
+    deliverable = await copilot.generate_deliverable(
+        obj.intent,
+        obj.title,
+        definition_of_done=obj.definition_of_done,
+        deadline=obj.deadline,
+        roles=roles or None,
+    )
+    deliverable_text = deliverable.get("content") or ""
+
     now = datetime.now(timezone.utc)
     run = ExecutionRun(
         objective_id=obj.id,
         status=RunStatus.COMPLETED,
         started_at=now,
         completed_at=now,
+        deliverable=deliverable_text,
     )
     session.add(run)
     session.flush()
@@ -754,9 +772,12 @@ def execute_objective(
         session,
         objective_id=obj.id,
         kind="execution.completed",
-        message=f"Orchestrated {len(plan_steps)} execution step(s); objective ready for validation.",
+        message=(
+            f"Orchestrated {len(plan_steps)} execution step(s) and produced the "
+            f"deliverable; objective ready for validation."
+        ),
         actor="orchestration-engine",
-        data={"steps": len(plan_steps)},
+        data={"steps": len(plan_steps), "deliverable_source": deliverable.get("_source")},
     )
     session.commit()
     session.refresh(obj)
@@ -1938,6 +1959,7 @@ def _execution_out(
         status=run.status.value,
         started_at=run.started_at,
         completed_at=run.completed_at,
+        deliverable=run.deliverable,
         steps=[
             ExecutionStepOut(
                 id=s.id,

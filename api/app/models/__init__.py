@@ -297,6 +297,9 @@ class ExecutionRun(SQLModel, table=True):
     status: RunStatus = RunStatus.PENDING
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    # The finished work product produced by execution (Markdown). This is what an
+    # operator reads as "the result" — distinct from per-step outputs/evidence.
+    deliverable: str | None = None
     created_at: datetime = Field(default_factory=_now)
 
 
