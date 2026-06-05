@@ -243,6 +243,8 @@ class WorkflowRole(SQLModel, table=True):
     # Sub-task-level settlement outcome, set when the sub-task settles:
     # "released" (paid to the assigned agent) or "slashed".
     outcome: str | None = None
+    # This role/agent's own produced contribution (Markdown), set at execution.
+    deliverable: str | None = None
 
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)

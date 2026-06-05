@@ -413,6 +413,7 @@ class WorkflowRoleOut(BaseModel):
     allocation_usdc: str = "0"
     status: str = "pending"
     outcome: str | None = None  # released | slashed, set at settlement
+    deliverable: str | None = None  # this role/agent's produced contribution
 
     # --- Coordination contract & sub-task state -----------------------------
     depends_on: list[str] = []  # sibling role ids that must pass first

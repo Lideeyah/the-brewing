@@ -80,6 +80,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     },
     "workflowrole": {
         "outcome": "VARCHAR",
+        "deliverable": "VARCHAR",
         "depends_on": "JSON NOT NULL DEFAULT '[]'",
         "success_criteria": "JSON NOT NULL DEFAULT '[]'",
         "required_evidence_kinds": "JSON NOT NULL DEFAULT '[]'",

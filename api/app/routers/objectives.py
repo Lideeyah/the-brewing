@@ -719,22 +719,43 @@ async def execute_objective(
     if not plan_steps:
         plan_steps = [{"title": "Fulfill objective", "detail": obj.title}]
 
-    # Produce the actual deliverable the objective asked for (Claude-backed,
-    # heuristic fallback). This is what the operator reads as "the result".
-    roles = [
-        r.title
-        for r in session.exec(
-            select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+    # Produce a deliverable for each role/agent plus a cumulative final work
+    # product (Claude-backed, heuristic fallback). This is what the operator
+    # reads as "the result".
+    role_rows = list(
+        session.exec(
+            select(WorkflowRole)
+            .where(WorkflowRole.objective_id == obj.id)
+            .order_by(WorkflowRole.order_index)
         ).all()
-    ]
-    deliverable = await copilot.generate_deliverable(
+    )
+    produced = await copilot.generate_deliverables(
         obj.intent,
         obj.title,
         definition_of_done=obj.definition_of_done,
         deadline=obj.deadline,
-        roles=roles or None,
+        roles=[
+            {"role_key": r.role_key, "title": r.title, "description": r.description}
+            for r in role_rows
+        ],
     )
-    deliverable_text = deliverable.get("content") or ""
+    deliverable_text = produced.get("cumulative") or ""
+
+    # Map each produced contribution back onto its role and mark it executed, so
+    # the per-agent rows surface real output and no longer read as "pending".
+    by_title = {
+        str(item.get("title", "")).strip().lower(): str(item.get("deliverable") or "")
+        for item in (produced.get("roles") or [])
+    }
+    for idx, role in enumerate(role_rows):
+        content = by_title.get(role.title.strip().lower())
+        if content is None and idx < len(produced.get("roles") or []):
+            content = str(produced["roles"][idx].get("deliverable") or "")
+        if content:
+            role.deliverable = content
+        role.status = RoleStatus.COMPLETED
+        role.updated_at = datetime.now(timezone.utc)
+        session.add(role)
 
     now = datetime.now(timezone.utc)
     run = ExecutionRun(
@@ -1702,6 +1723,18 @@ def settle_objective(
                 )
             )
             obj.status = ObjectiveStatus.SETTLED
+            # The objective settled as a whole — reflect that on its sub-task rows
+            # so the per-role allocation area doesn't read as stuck "pending".
+            for role in session.exec(
+                select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+            ).all():
+                if role.settlement_status == "pending":
+                    role.validation_status = "passed"
+                    role.settlement_status = "settled"
+                    role.outcome = role.outcome or "released"
+                    role.status = RoleStatus.COMPLETED
+                    role.updated_at = datetime.now(timezone.utc)
+                    session.add(role)
             log_event(
                 session,
                 objective_id=obj.id,
@@ -2632,6 +2665,7 @@ def _role_out(session: Session, role: WorkflowRole) -> WorkflowRoleOut:
         allocation_usdc=role.allocation_usdc,
         status=role.status.value if hasattr(role.status, "value") else str(role.status),
         outcome=role.outcome,
+        deliverable=role.deliverable,
         depends_on=list(role.depends_on or []),
         success_criteria=list(role.success_criteria or []),
         required_evidence_kinds=list(role.required_evidence_kinds or []),

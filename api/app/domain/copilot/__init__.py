@@ -557,3 +557,114 @@ async def generate_deliverable(
         fallback = _heuristic_deliverable(intent, title, definition_of_done)
         fallback["_source"] = "heuristic_fallback"
         return fallback
+
+
+def _heuristic_role_deliverables(
+    intent: str, title: str | None, roles: list[dict], definition_of_done: str | None
+) -> dict:
+    out_roles = []
+    for r in roles:
+        out_roles.append(
+            {
+                "title": r.get("title") or r.get("role_key") or "Role",
+                "deliverable": (
+                    f"### {r.get('title')}\n\n{r.get('description') or ''}\n\n"
+                    f"Contribution recorded for: {intent}"
+                ),
+            }
+        )
+    cumulative = _heuristic_deliverable(intent, title, definition_of_done)["content"]
+    return {"roles": out_roles, "cumulative": cumulative, "_source": "heuristic"}
+
+
+def _parse_delimited_deliverables(text: str) -> tuple[list[dict], str]:
+    """Parse the ===ROLE: <title>=== / ===CUMULATIVE=== delimiter format."""
+    cumulative = ""
+    body = text
+    if "===CUMULATIVE===" in text:
+        body, _, cumulative = text.rpartition("===CUMULATIVE===")
+        cumulative = cumulative.strip()
+    role_items: list[dict] = []
+    for chunk in body.split("===ROLE:")[1:]:
+        header, sep, content = chunk.partition("===")
+        if not sep:
+            continue
+        title = header.strip()
+        deliverable = content.strip()
+        if title and deliverable:
+            role_items.append({"title": title, "deliverable": deliverable})
+    return role_items, cumulative
+
+
+async def generate_deliverables(
+    intent: str,
+    title: str | None = None,
+    *,
+    definition_of_done: str | None = None,
+    deadline: str | None = None,
+    roles: list[dict] | None = None,
+) -> dict:
+    """Produce a deliverable for each role plus a cumulative final work product.
+
+    `roles` is a list of {role_key, title, description}. Returns
+    {"roles": [{"title", "deliverable"}], "cumulative": str, "_source": str},
+    in one model call. Degrades to a deterministic heuristic.
+    """
+    roles = roles or []
+    settings = get_settings()
+    if not settings.anthropic_api_key or not roles:
+        # With no roles, still produce a single cumulative deliverable.
+        if not roles:
+            single = await generate_deliverable(
+                intent, title, definition_of_done=definition_of_done, deadline=deadline
+            )
+            return {"roles": [], "cumulative": single["content"], "_source": single["_source"]}
+        return _heuristic_role_deliverables(intent, title, roles, definition_of_done)
+
+    try:
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        roster = "\n".join(
+            f"- {r.get('title')} ({r.get('role_key')}): {r.get('description') or ''}"
+            for r in roles
+        )
+        # Delimiter format (not JSON) — markdown content can't break it the way
+        # quotes/newlines break JSON, so parsing is robust.
+        template = "\n".join(f"===ROLE: {r.get('title')}===\n<contribution>" for r in roles)
+        user_msg = (
+            f"Objective: {title or intent}\n\nIntent:\n{intent}\n\n"
+            f"Definition of done: {definition_of_done or 'use professional judgment'}\n"
+            f"Deadline: {deadline or 'n/a'}\n\n"
+            f"A coordinated multi-agent team holds these roles:\n{roster}\n\n"
+            "Produce each role's concrete contribution, then a cumulative final "
+            "deliverable that integrates them into the finished work product the "
+            "objective asked for. Be substantive and specific.\n\n"
+            "Output EXACTLY in this format, using these delimiter lines verbatim "
+            "and nothing before the first one:\n\n"
+            f"{template}\n===CUMULATIVE===\n<final integrated deliverable>"
+        )
+        async with _pacemaker:
+            await asyncio.sleep(settings.orchestration_pacemaker_seconds)
+            resp = await client.messages.create(
+                model=settings.copilot_model,
+                max_tokens=8000,
+                system=_DELIVERABLE_SYSTEM,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+        text = "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        )
+        role_items, cumulative = _parse_delimited_deliverables(text)
+        if not cumulative and role_items:
+            cumulative = "\n\n---\n\n".join(
+                str(r.get("deliverable", "")) for r in role_items
+            )
+        if not cumulative:
+            raise ValueError("empty deliverables")
+        return {"roles": role_items, "cumulative": cumulative, "_source": settings.copilot_model}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Copilot role-deliverable generation fell back: %s", exc)
+        fallback = _heuristic_role_deliverables(intent, title, roles, definition_of_done)
+        fallback["_source"] = "heuristic_fallback"
+        return fallback
