@@ -413,6 +413,20 @@ export default async function ObjectiveDetailPage({
             </div>
           )}
 
+          {/* Deliverable — the actual produced result */}
+          {execution?.deliverable && (
+            <Panel className="mt-4">
+              <PanelHeader title="Deliverable" meta="produced by execution" />
+              <PanelBody>
+                <div className="max-h-[520px] overflow-y-auto rounded-lg border border-border bg-background p-4">
+                  <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-foreground">
+                    {execution.deliverable}
+                  </pre>
+                </div>
+              </PanelBody>
+            </Panel>
+          )}
+
           {/* Execution orchestration */}
           {execution && (
             <Panel className="mt-4">

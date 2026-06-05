@@ -61,6 +61,7 @@ export interface ExecutionRun {
   status: string;
   started_at?: string | null;
   completed_at?: string | null;
+  deliverable?: string | null;
   steps: ExecutionStep[];
 }
 
