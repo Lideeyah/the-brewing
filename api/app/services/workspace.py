@@ -92,6 +92,13 @@ def get_or_create_default_workspace(session: Session, user: User) -> Workspace:
         )
     )
     _provision_treasury(session, workspace)
+    # Seed the assignable executor-agent roster (best-effort, like the treasury).
+    try:
+        from app.domain import registry
+
+        registry.ensure_system_agents(session, workspace.id)
+    except Exception as exc:  # noqa: BLE001 — seeding must never block sign-in
+        logger.warning("System-agent seeding deferred: %s", exc)
     return workspace
 
 

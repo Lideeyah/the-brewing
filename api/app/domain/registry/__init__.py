@@ -112,6 +112,79 @@ def register_agent(
     return agent
 
 
+# Network-level executor agents, seeded per workspace on first use (mirrors the
+# system-validator seeding) so a tenant always has a roster to assign roles to.
+# Capabilities map onto the workflow ROLE_CATALOG keys. Validators are seeded
+# separately (app.domain.validation); these are the *executing* counterparties.
+SYSTEM_AGENTS: list[dict] = [
+    {
+        "owner": "system:atlas",
+        "name": "Atlas Research Agent",
+        "capabilities": ["research", "planner"],
+        "description": (
+            "Gathers the source material and evidence an objective depends on — "
+            "market scans, competitor intelligence, and data collection."
+        ),
+    },
+    {
+        "owner": "system:vela",
+        "name": "Vela Analysis Agent",
+        "capabilities": ["analysis"],
+        "description": (
+            "Synthesizes raw findings into structured, decision-ready "
+            "conclusions, comparisons, and recommendations."
+        ),
+    },
+    {
+        "owner": "system:forge",
+        "name": "Forge Execution Agent",
+        "capabilities": ["executor", "planner"],
+        "description": (
+            "Produces the primary deliverable an objective asks for — reports, "
+            "drafts, briefs, documents, and decks."
+        ),
+    },
+    {
+        "owner": "system:sentinel",
+        "name": "Sentinel Review Agent",
+        "capabilities": ["reviewer"],
+        "description": (
+            "Checks a deliverable against the objective's quality bar before it "
+            "is submitted for independent validation and settlement."
+        ),
+    },
+]
+
+
+def ensure_system_agents(session: Session, workspace_id: str) -> list[AgentIdentity]:
+    """Idempotently seed the system executor agents for a workspace.
+
+    Returns the full roster (existing + newly created). Deduplicated by name so
+    repeated calls never mint duplicates. A workspace that already has agents
+    simply gets nothing added.
+    """
+    existing = session.exec(
+        select(AgentIdentity).where(AgentIdentity.workspace_id == workspace_id)
+    ).all()
+    names = {a.name for a in existing}
+    for spec in SYSTEM_AGENTS:
+        if spec["name"] in names:
+            continue
+        register_agent(
+            session,
+            workspace_id=workspace_id,
+            owner=spec["owner"],
+            name=spec["name"],
+            capabilities=spec["capabilities"],
+            service_endpoints=[],
+            description=spec["description"],
+            discoverable=True,
+        )
+    return session.exec(
+        select(AgentIdentity).where(AgentIdentity.workspace_id == workspace_id)
+    ).all()
+
+
 def _sign(agent: AgentIdentity, message: str) -> str:
     """HMAC stand-in for the agent's agentic-wallet signature."""
 

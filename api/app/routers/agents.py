@@ -7,6 +7,8 @@ agent to its evaluation feedback before the outcome is revealed.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
@@ -41,6 +43,7 @@ from app.schemas import (
 from app.services import workspace as workspace_service
 
 router = APIRouter(prefix="/agents", tags=["agents"])
+logger = logging.getLogger("brewing.agents")
 
 
 def current_workspace(
@@ -166,6 +169,11 @@ def list_agents(
     workspace: Workspace = Depends(current_workspace),
     session: Session = Depends(get_session),
 ) -> list[AgentIdentityOut]:
+    # Ensure the workspace always has an assignable roster (best-effort).
+    try:
+        registry.ensure_system_agents(session, workspace.id)
+    except Exception:  # noqa: BLE001 — seeding must never break listing
+        logger.warning("system-agent seeding failed", exc_info=True)
     agents = session.exec(
         select(AgentIdentity)
         .where(AgentIdentity.workspace_id == workspace.id)
