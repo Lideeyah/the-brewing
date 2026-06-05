@@ -174,6 +174,13 @@ class Objective(SQLModel, table=True):
 
     escrow_amount_usdc: str = "0"  # exact decimal stored as string
 
+    # Operator-stated SLA. The Copilot still structures sla_config, but these are
+    # what the *human* declared "done" means and by when — never overwritten by
+    # structuring. `deadline` is free text (e.g. "48 hours" or a date) so an
+    # operator can express either a duration or an absolute due date.
+    definition_of_done: str | None = None
+    deadline: str | None = None
+
     created_at: datetime = Field(default_factory=_now)
     updated_at: datetime = Field(default_factory=_now)
 

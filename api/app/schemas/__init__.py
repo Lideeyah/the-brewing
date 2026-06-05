@@ -86,6 +86,9 @@ class ObjectiveCreate(BaseModel):
     # amount and the Copilot structures the workflow within it; when omitted the
     # Copilot recommends a budget at structure time.
     budget_usdc: str | None = None
+    # Optional operator-stated SLA: what "done" means and by when.
+    definition_of_done: str | None = None
+    deadline: str | None = None
 
 
 class GovernanceEventOut(BaseModel):
@@ -497,6 +500,8 @@ class UpdateAllocationIn(BaseModel):
 class ObjectiveDetailOut(ObjectiveOut):
     governance_config: dict
     sla_config: dict
+    definition_of_done: str | None = None
+    deadline: str | None = None
     settlement_config: dict
     orchestration_plan: dict
     timeline: list[GovernanceEventOut]

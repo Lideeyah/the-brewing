@@ -180,6 +180,8 @@ def create_objective(
         intent=intent,
         status=ObjectiveStatus.DRAFT,
         escrow_amount_usdc=escrow_amount,
+        definition_of_done=(body.definition_of_done or "").strip() or None,
+        deadline=(body.deadline or "").strip() or None,
     )
     session.add(obj)
     session.flush()
@@ -2537,6 +2539,8 @@ def _detail(session: Session, obj: Objective) -> ObjectiveDetailOut:
         **base.model_dump(),
         governance_config=obj.governance_config,
         sla_config=obj.sla_config,
+        definition_of_done=obj.definition_of_done,
+        deadline=obj.deadline,
         settlement_config=obj.settlement_config,
         orchestration_plan=obj.orchestration_plan,
         timeline=[_event_out(e) for e in events],

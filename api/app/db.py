@@ -45,6 +45,8 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     },
     "objective": {
         "agent_id": "VARCHAR",
+        "definition_of_done": "VARCHAR",
+        "deadline": "VARCHAR",
     },
     "agentidentity": {
         "description": "VARCHAR",
