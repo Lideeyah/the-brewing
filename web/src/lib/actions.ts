@@ -18,11 +18,13 @@ import type {
 export async function createObjective(formData: FormData) {
   const intent = (formData.get("intent") as string | null)?.trim();
   const title = (formData.get("title") as string | null)?.trim() || undefined;
+  const budget = (formData.get("budget") as string | null)?.trim() || undefined;
   if (!intent) return;
 
   const objective = await apiPost<ObjectiveDetail>("/objectives", {
     intent,
     title,
+    budget_usdc: budget,
   });
   revalidatePath("/objectives");
   revalidatePath("/dashboard");
