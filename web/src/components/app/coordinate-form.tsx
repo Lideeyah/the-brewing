@@ -74,6 +74,34 @@ export function CoordinateForm() {
           </div>
         </div>
       </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div>
+          <label className="mb-1.5 block font-operational text-[11px] uppercase tracking-wider text-muted">
+            Definition of done (SLA)
+          </label>
+          <textarea
+            name="definition_of_done"
+            rows={3}
+            placeholder="What does “done” mean to you? e.g. “At least 8 named competitors, each with pricing and a cited source.” Leave blank to let the Copilot propose the acceptance bar."
+            className="w-full resize-y rounded-lg border border-border bg-background px-3.5 py-2.5 text-[13px] leading-relaxed text-foreground placeholder:text-muted focus:border-border-strong focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1.5 block font-operational text-[11px] uppercase tracking-wider text-muted">
+            Deadline · timeframe (SLA)
+          </label>
+          <input
+            name="deadline"
+            type="text"
+            placeholder="e.g. 48 hours, or 2026-06-10"
+            className="w-full rounded-lg border border-border bg-background px-3.5 py-2.5 text-[13px] text-foreground placeholder:text-muted focus:border-border-strong focus:outline-none"
+          />
+          <p className="mt-1.5 text-[11px] leading-snug text-muted">
+            The service level the work is held to — a duration or an absolute
+            due date.
+          </p>
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <p className="text-[12px] text-muted">
           The Copilot structures governance, SLA, and settlement next.

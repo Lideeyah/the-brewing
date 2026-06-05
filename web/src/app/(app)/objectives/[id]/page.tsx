@@ -124,10 +124,34 @@ export default async function ObjectiveDetailPage({
           <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
             <Panel className="lg:col-span-2">
               <PanelHeader title="Operational intent" />
-              <PanelBody>
+              <PanelBody className="space-y-4">
                 <p className="whitespace-pre-wrap text-[13px] leading-relaxed text-secondary">
                   {obj.intent}
                 </p>
+                {(obj.definition_of_done || obj.deadline) && (
+                  <div className="grid grid-cols-1 gap-3 border-t border-border pt-3 sm:grid-cols-2">
+                    {obj.definition_of_done && (
+                      <div>
+                        <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                          Definition of done · SLA
+                        </p>
+                        <p className="mt-1 whitespace-pre-wrap text-[13px] leading-relaxed text-foreground">
+                          {obj.definition_of_done}
+                        </p>
+                      </div>
+                    )}
+                    {obj.deadline && (
+                      <div>
+                        <p className="font-operational text-[11px] uppercase tracking-wider text-muted">
+                          Deadline · SLA
+                        </p>
+                        <p className="mt-1 text-[13px] text-foreground">
+                          {obj.deadline}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </PanelBody>
             </Panel>
             <Panel>

@@ -19,12 +19,17 @@ export async function createObjective(formData: FormData) {
   const intent = (formData.get("intent") as string | null)?.trim();
   const title = (formData.get("title") as string | null)?.trim() || undefined;
   const budget = (formData.get("budget") as string | null)?.trim() || undefined;
+  const definitionOfDone =
+    (formData.get("definition_of_done") as string | null)?.trim() || undefined;
+  const deadline = (formData.get("deadline") as string | null)?.trim() || undefined;
   if (!intent) return;
 
   const objective = await apiPost<ObjectiveDetail>("/objectives", {
     intent,
     title,
     budget_usdc: budget,
+    definition_of_done: definitionOfDone,
+    deadline,
   });
   revalidatePath("/objectives");
   revalidatePath("/dashboard");

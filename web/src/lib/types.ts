@@ -366,6 +366,8 @@ export interface OnChainLedger {
 export interface ObjectiveDetail extends Objective {
   governance_config: Record<string, unknown>;
   sla_config: Record<string, unknown>;
+  definition_of_done?: string | null;
+  deadline?: string | null;
   settlement_config: Record<string, unknown>;
   orchestration_plan: { steps?: { title: string; detail?: string }[] } & Record<
     string,
