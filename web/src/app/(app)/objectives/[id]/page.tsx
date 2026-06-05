@@ -24,6 +24,7 @@ import { ProvenanceChain } from "@/components/app/provenance-chain";
 import { SettlementRationale } from "@/components/app/settlement-rationale";
 import { GovernanceRisks } from "@/components/app/governance-risks";
 import { EvidenceTrail } from "@/components/app/evidence-trail";
+import { Markdown } from "@/components/ui/markdown";
 import { OnChainLedger } from "@/components/app/onchain-ledger";
 import { ApiError, apiGet } from "@/lib/api";
 import type { AgentIdentity, ObjectiveDetail } from "@/lib/types";
@@ -67,6 +68,7 @@ export default async function ObjectiveDetailPage({
   const escrow = obj.escrow;
   const canLockEscrow = obj.status === "copilot_structured";
   const execution = obj.execution;
+  const agentResults = obj.workflow.filter((r) => r.deliverable);
   const evaluation = obj.evaluation;
   const validation = obj.validation;
   const audit = obj.audit;
@@ -413,16 +415,47 @@ export default async function ObjectiveDetailPage({
             </div>
           )}
 
-          {/* Deliverable — the actual produced result */}
+          {/* Deliverable — the cumulative produced result */}
           {execution?.deliverable && (
             <Panel className="mt-4">
-              <PanelHeader title="Deliverable" meta="produced by execution" />
+              <PanelHeader title="Deliverable" meta="cumulative result" />
               <PanelBody>
-                <div className="max-h-[520px] overflow-y-auto rounded-lg border border-border bg-background p-4">
-                  <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-foreground">
-                    {execution.deliverable}
-                  </pre>
+                <div className="max-h-[560px] overflow-y-auto rounded-lg border border-border bg-background p-4">
+                  <Markdown>{execution.deliverable}</Markdown>
                 </div>
+              </PanelBody>
+            </Panel>
+          )}
+
+          {/* Per-agent results — each role/agent's own contribution */}
+          {agentResults.length > 0 && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="Agent contributions"
+                meta={`${agentResults.length} agent${agentResults.length === 1 ? "" : "s"}`}
+              />
+              <PanelBody className="space-y-2.5">
+                {agentResults.map((r) => (
+                  <details
+                    key={r.id}
+                    className="group rounded-lg border border-border bg-background"
+                  >
+                    <summary className="flex cursor-pointer items-center gap-3 px-4 py-3 text-[13px] text-foreground marker:content-['']">
+                      <span className="font-operational text-[10px] uppercase tracking-wider text-accent">
+                        {r.role_key}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate font-medium">
+                        {r.assigned_agent?.name ?? r.title}
+                      </span>
+                      <span className="font-operational text-[11px] text-muted group-open:hidden">
+                        view
+                      </span>
+                    </summary>
+                    <div className="border-t border-border px-4 py-3">
+                      <Markdown>{r.deliverable ?? ""}</Markdown>
+                    </div>
+                  </details>
+                ))}
               </PanelBody>
             </Panel>
           )}
@@ -435,7 +468,12 @@ export default async function ObjectiveDetailPage({
                 meta={execution.status}
               />
               <PanelBody>
-                <ol className="space-y-3">
+                <details>
+                  <summary className="cursor-pointer font-operational text-[11px] uppercase tracking-wider text-muted">
+                    Show {execution.steps.length} coordination step
+                    {execution.steps.length === 1 ? "" : "s"}
+                  </summary>
+                  <ol className="mt-3 space-y-3">
                   {execution.steps.map((s) => (
                     <li key={s.id} className="flex gap-2.5">
                       <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-border-strong font-operational text-[10px] text-accent">
@@ -460,7 +498,8 @@ export default async function ObjectiveDetailPage({
                       </div>
                     </li>
                   ))}
-                </ol>
+                  </ol>
+                </details>
               </PanelBody>
             </Panel>
           )}
@@ -569,7 +608,17 @@ export default async function ObjectiveDetailPage({
 
           {/* Evidence audit trail — output → evidence → validation → settlement */}
           {obj.evidence_trail && (
-            <EvidenceTrail trail={obj.evidence_trail} />
+            <details className="mt-4 rounded-xl border border-border bg-surface">
+              <summary className="cursor-pointer px-5 py-3.5 text-[13px] font-medium text-foreground">
+                Evidence audit trail
+                <span className="ml-2 font-operational text-[11px] text-muted">
+                  output → evidence → validation → settlement
+                </span>
+              </summary>
+              <div className="border-t border-border">
+                <EvidenceTrail trail={obj.evidence_trail} />
+              </div>
+            </details>
           )}
 
           {/* AI governance evaluation (advisory) */}

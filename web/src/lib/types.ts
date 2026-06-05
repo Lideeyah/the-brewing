@@ -230,6 +230,7 @@ export interface WorkflowRole {
   allocation_usdc: string;
   status: RoleStatus;
   outcome?: string | null;
+  deliverable?: string | null;
   // Coordination contract + per-sub-task state.
   depends_on: string[];
   success_criteria: (string | Record<string, unknown>)[];
