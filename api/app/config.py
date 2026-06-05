@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     ata_funder_secret: str = ""
     solana_rpc_url: str = "https://api.devnet.solana.com"
 
+    # Platform revenue wallet. When set, the settlement fee is swept here on
+    # release instead of being left in the per-objective escrow wallet. Blank =
+    # fee stays in escrow (prior behaviour).
+    platform_fee_wallet_address: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

@@ -1722,6 +1722,25 @@ def settle_objective(
                     payout_tx_ref=transfer.tx_ref,
                 )
             )
+            # Sweep the retained fee to the platform revenue wallet, if one is
+            # configured. Best-effort: a failed sweep must never block settlement
+            # (the fee simply stays in escrow, the prior behaviour).
+            from app.config import get_settings as _get_settings
+
+            fee_wallet = _get_settings().platform_fee_wallet_address
+            if fee_wallet and fee > 0:
+                try:
+                    provider.collect_fee(
+                        EscrowRef(
+                            provider_escrow_id=escrow.provider_escrow_id or "",
+                            address=escrow.address or "",
+                            amount=fee,
+                        ),
+                        fee_wallet,
+                        fee,
+                    )
+                except Exception as exc:  # noqa: BLE001 — non-blocking
+                    logger.warning("Platform fee sweep failed: %s", exc)
             obj.status = ObjectiveStatus.SETTLED
             # The objective settled as a whole — reflect that on its sub-task rows
             # so the per-role allocation area doesn't read as stuck "pending".

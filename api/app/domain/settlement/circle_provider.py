@@ -217,6 +217,21 @@ class CircleSettlementProvider(SettlementProvider):
             ref_id=f"slash:{escrow.provider_escrow_id}",
         )
 
+    def collect_fee(
+        self, escrow: EscrowRef, destination_address: str, amount: Decimal
+    ) -> TransferResult:
+        """Sweep the retained settlement fee from escrow to the platform wallet."""
+        return self._transfer(
+            source=WalletRef(
+                provider_wallet_id=escrow.provider_escrow_id,
+                address=escrow.address,
+                blockchain=self.settings.circle_blockchain,
+            ),
+            destination_address=destination_address,
+            amount=amount,
+            ref_id=f"fee:{escrow.provider_escrow_id}",
+        )
+
     def get_transaction_proof(self, tx_ref: str) -> TxProof:
         """Resolve a Circle transaction id to its confirmed on-chain signature.
 
