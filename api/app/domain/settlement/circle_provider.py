@@ -232,6 +232,17 @@ class CircleSettlementProvider(SettlementProvider):
             ref_id=f"fee:{escrow.provider_escrow_id}",
         )
 
+    def withdraw(
+        self, source: WalletRef, destination_address: str, amount: Decimal
+    ) -> TransferResult:
+        """Move USDC out of a platform-owned wallet to an external address."""
+        return self._transfer(
+            source=source,
+            destination_address=destination_address,
+            amount=amount,
+            ref_id=f"withdraw:{source.provider_wallet_id}",
+        )
+
     def get_transaction_proof(self, tx_ref: str) -> TxProof:
         """Resolve a Circle transaction id to its confirmed on-chain signature.
 

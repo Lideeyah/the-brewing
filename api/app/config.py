@@ -81,8 +81,10 @@ class Settings(BaseSettings):
 
     # Platform revenue wallet. When set, the settlement fee is swept here on
     # release instead of being left in the per-objective escrow wallet. Blank =
-    # fee stays in escrow (prior behaviour).
+    # fee stays in escrow (prior behaviour). The id is needed to read its balance
+    # and to withdraw from it in the admin console.
     platform_fee_wallet_address: str = ""
+    platform_fee_wallet_id: str = ""
 
     @property
     def is_production(self) -> bool:

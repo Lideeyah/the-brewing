@@ -850,7 +850,23 @@ class AdminOverviewOut(BaseModel):
     objectives_by_status: dict[str, int]
     agents_total: int
     settled_usdc_total: str
-    fees_usdc_total: str  # platform revenue
+    fees_usdc_total: str  # platform revenue (lifetime, recorded)
     settlements_count: int
     recent_objectives: list[AdminRecentObjective]
     recent_settlements: list[AdminRecentSettlement]
+    # Platform revenue wallet — where swept fees actually land.
+    platform_fee_wallet_address: str | None = None
+    platform_fee_balance_usdc: str | None = None  # live on-chain balance
+
+
+class FeeWithdrawIn(BaseModel):
+    destination_address: str
+    amount_usdc: str | None = None  # omit to withdraw the full balance
+
+
+class FeeWithdrawOut(BaseModel):
+    ok: bool
+    amount_usdc: str
+    destination_address: str
+    explorer_url: str | None = None
+    message: str | None = None
