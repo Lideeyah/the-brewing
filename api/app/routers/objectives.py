@@ -779,22 +779,45 @@ async def _orchestrate_execution(objective_id: str, run_id: str) -> None:
         run.completed_at = now
         run.deliverable = deliverable_text
         session.add(run)
-        for i, step in enumerate(plan_steps):
-            title = str(step.get("title") or f"Step {i + 1}") if isinstance(step, dict) else str(step)
-            detail = step.get("detail") if isinstance(step, dict) else None
+        # Execution steps carry the ACTUAL produced work, so the evidence the
+        # validator, governance, and settlement-authorization review IS the
+        # deliverable — not placeholder stubs. (Stubs made the whole chain read
+        # "thin evidence / 0 criteria satisfied / recommend reject" even though
+        # the agents produced a real brief — the core integrity disconnect.)
+        idx = 0
+        for role in role_rows:
+            if role.deliverable:
+                session.add(
+                    ExecutionStep(
+                        run_id=run.id,
+                        index=idx,
+                        title=f"{role.title} ({role.role_key})",
+                        status=StepStatus.COMPLETED,
+                        output=role.deliverable,
+                    )
+                )
+                idx += 1
+        if deliverable_text:
             session.add(
                 ExecutionStep(
                     run_id=run.id,
-                    index=i,
-                    title=title,
+                    index=idx,
+                    title="Final integrated deliverable",
                     status=StepStatus.COMPLETED,
-                    output=(
-                        f"Coordinated and recorded: {detail}"
-                        if detail
-                        else "Coordinated and recorded by orchestration."
-                    ),
+                    output=deliverable_text,
                 )
             )
+            idx += 1
+        if idx == 0:  # fallback if generation produced nothing usable
+            for i, step in enumerate(plan_steps):
+                title = str(step.get("title") or f"Step {i + 1}") if isinstance(step, dict) else str(step)
+                session.add(
+                    ExecutionStep(
+                        run_id=run.id, index=i, title=title,
+                        status=StepStatus.COMPLETED,
+                        output="Coordinated and recorded by orchestration.",
+                    )
+                )
         obj.status = ObjectiveStatus.UNDER_AUDIT
         obj.updated_at = now
         session.add(obj)
