@@ -2,7 +2,6 @@ import { redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import { Sidebar } from "@/components/app/sidebar";
-import { isAdminEmail } from "@/lib/admin";
 import { getWorkspaceState } from "@/lib/onboarding";
 
 export default async function AppLayout({
@@ -23,7 +22,7 @@ export default async function AppLayout({
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <Sidebar isAdmin={isAdminEmail(session.user?.email)} />
+      <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col">{children}</div>
     </div>
   );

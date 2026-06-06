@@ -4,6 +4,7 @@ import { Plus } from "lucide-react";
 import { auth } from "@/auth";
 import { StatusPill } from "@/components/ui/status-pill";
 import { UserMenu } from "@/components/app/user-menu";
+import { FeedbackButton } from "@/components/app/feedback-button";
 
 export async function Topbar({
   title,
@@ -28,7 +29,7 @@ export async function Topbar({
         )}
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-3">
         <StatusPill tone="active">{prettyNetwork(network)}</StatusPill>
 
         <Link
@@ -38,6 +39,8 @@ export async function Topbar({
           <Plus size={15} />
           New Objective
         </Link>
+
+        <FeedbackButton />
 
         <UserMenu name={session?.user?.name} email={session?.user?.email} />
       </div>

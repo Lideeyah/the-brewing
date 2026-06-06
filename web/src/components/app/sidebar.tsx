@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
-  BarChart3,
   Bot,
   ClipboardCheck,
   Gauge,
@@ -37,7 +36,7 @@ const secondary = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
+export function Sidebar() {
   const pathname = usePathname();
 
   const isActive = (href: string) =>
@@ -61,14 +60,6 @@ export function Sidebar({ isAdmin = false }: { isAdmin?: boolean }) {
       </nav>
 
       <div className="space-y-0.5 border-t border-border px-3 py-4">
-        {isAdmin && (
-          <NavLink
-            href="/admin"
-            label="Admin"
-            icon={BarChart3}
-            active={isActive("/admin")}
-          />
-        )}
         {secondary.map((item) => (
           <NavLink key={item.href} {...item} active={isActive(item.href)} />
         ))}
