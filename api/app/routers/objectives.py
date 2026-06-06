@@ -14,11 +14,11 @@ import time
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from app.auth import get_current_user
-from app.db import get_session
+from app.db import engine, get_session
 from app.domain import copilot, oracle, registry, validation
 from app.domain import workflow as workflow_domain
 from app.domain.governance import log_event
@@ -417,6 +417,14 @@ async def structure_objective(
     obj.sla_config = structured.get("sla_config", {})
     obj.settlement_config = structured.get("settlement_config", {})
     obj.orchestration_plan = structured.get("orchestration_plan", {})
+    # Operator-stated SLA wins over the Copilot's invented values — the deadline
+    # and "done" the human entered are authoritative, never overwritten by
+    # structuring (which otherwise fabricates its own deadline_hours).
+    if obj.deadline:
+        obj.sla_config["deadline"] = obj.deadline
+        obj.sla_config.pop("deadline_hours", None)
+    if obj.definition_of_done:
+        obj.sla_config["definition_of_done"] = obj.definition_of_done
     # Honour an operator-set budget; only fall back to the Copilot's
     # recommendation when no explicit budget was provided at creation.
     try:
@@ -693,19 +701,125 @@ def lock_objective_escrow(
     )
 
 
+async def _orchestrate_execution(objective_id: str, run_id: str) -> None:
+    """Background worker: generate the deliverables and finish the run.
+
+    Runs *after* the execute request returns, so a ~20s model generation never
+    blocks (or is cut by) the HTTP request. Uses its own DB session. On any
+    failure it records the error on the run and reverts the objective to
+    ESCROW_LOCKED so the operator can retry — execution never gets stuck.
+    """
+    with Session(engine) as session:
+        obj = session.get(Objective, objective_id)
+        run = session.get(ExecutionRun, run_id)
+        if obj is None or run is None:
+            return
+        role_rows = list(
+            session.exec(
+                select(WorkflowRole)
+                .where(WorkflowRole.objective_id == obj.id)
+                .order_by(WorkflowRole.order_index)
+            ).all()
+        )
+        plan_steps = obj.orchestration_plan.get("steps") or [
+            {"title": "Fulfill objective", "detail": obj.title}
+        ]
+        try:
+            produced = await copilot.generate_deliverables(
+                obj.intent,
+                obj.title,
+                definition_of_done=obj.definition_of_done,
+                deadline=obj.deadline,
+                roles=[
+                    {"role_key": r.role_key, "title": r.title, "description": r.description}
+                    for r in role_rows
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 — never strand the objective
+            logger.warning("Execution generation failed: %s", exc)
+            run.status = RunStatus.FAILED
+            obj.status = ObjectiveStatus.ESCROW_LOCKED  # allow retry
+            obj.updated_at = datetime.now(timezone.utc)
+            session.add(run)
+            session.add(obj)
+            log_event(
+                session,
+                objective_id=obj.id,
+                kind="execution.failed",
+                message="Execution could not produce a deliverable; you can retry.",
+                actor="orchestration-engine",
+            )
+            session.commit()
+            return
+
+        deliverable_text = produced.get("cumulative") or ""
+        by_title = {
+            str(item.get("title", "")).strip().lower(): str(item.get("deliverable") or "")
+            for item in (produced.get("roles") or [])
+        }
+        for idx, role in enumerate(role_rows):
+            content = by_title.get(role.title.strip().lower())
+            if content is None and idx < len(produced.get("roles") or []):
+                content = str(produced["roles"][idx].get("deliverable") or "")
+            if content:
+                role.deliverable = content
+            role.status = RoleStatus.COMPLETED
+            role.updated_at = datetime.now(timezone.utc)
+            session.add(role)
+
+        now = datetime.now(timezone.utc)
+        run.status = RunStatus.COMPLETED
+        run.completed_at = now
+        run.deliverable = deliverable_text
+        session.add(run)
+        for i, step in enumerate(plan_steps):
+            title = str(step.get("title") or f"Step {i + 1}") if isinstance(step, dict) else str(step)
+            detail = step.get("detail") if isinstance(step, dict) else None
+            session.add(
+                ExecutionStep(
+                    run_id=run.id,
+                    index=i,
+                    title=title,
+                    status=StepStatus.COMPLETED,
+                    output=(
+                        f"Coordinated and recorded: {detail}"
+                        if detail
+                        else "Coordinated and recorded by orchestration."
+                    ),
+                )
+            )
+        obj.status = ObjectiveStatus.UNDER_AUDIT
+        obj.updated_at = now
+        session.add(obj)
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="execution.completed",
+            message=(
+                f"Orchestrated {len(plan_steps)} execution step(s) and produced the "
+                f"deliverable; objective ready for validation."
+            ),
+            actor="orchestration-engine",
+            data={"steps": len(plan_steps), "deliverable_source": produced.get("_source")},
+        )
+        session.commit()
+
+
 @router.post("/{objective_id}/execute", response_model=ObjectiveDetailOut)
-async def execute_objective(
+def execute_objective(
     objective_id: str,
+    background_tasks: BackgroundTasks,
     user: User = Depends(get_current_user),
     workspace: Workspace = Depends(current_workspace),
     session: Session = Depends(get_session),
 ) -> ObjectiveDetailOut:
-    """Execution orchestration.
+    """Kick off execution orchestration.
 
     Brewing coordinates execution against the Copilot's orchestration plan; it
-    does not run agents itself. Each plan step is materialized as a coordinated
-    unit of work whose result is recorded on the run, producing an auditable
-    execution record. Advances the objective into validation (UNDER_AUDIT).
+    does not run agents itself. Generating the deliverables takes ~20s, so we do
+    it in a background task and return immediately with the objective in
+    EXECUTING — the UI polls until it advances to UNDER_AUDIT. This keeps the
+    request well inside any host/proxy timeout.
     """
     obj = _get_owned_objective(session, workspace, objective_id)
 
@@ -715,92 +829,27 @@ async def execute_objective(
             detail="Escrow must be locked before execution can be orchestrated.",
         )
 
-    plan_steps = obj.orchestration_plan.get("steps") or []
-    if not plan_steps:
-        plan_steps = [{"title": "Fulfill objective", "detail": obj.title}]
-
-    # Produce a deliverable for each role/agent plus a cumulative final work
-    # product (Claude-backed, heuristic fallback). This is what the operator
-    # reads as "the result".
-    role_rows = list(
-        session.exec(
-            select(WorkflowRole)
-            .where(WorkflowRole.objective_id == obj.id)
-            .order_by(WorkflowRole.order_index)
-        ).all()
-    )
-    produced = await copilot.generate_deliverables(
-        obj.intent,
-        obj.title,
-        definition_of_done=obj.definition_of_done,
-        deadline=obj.deadline,
-        roles=[
-            {"role_key": r.role_key, "title": r.title, "description": r.description}
-            for r in role_rows
-        ],
-    )
-    deliverable_text = produced.get("cumulative") or ""
-
-    # Map each produced contribution back onto its role and mark it executed, so
-    # the per-agent rows surface real output and no longer read as "pending".
-    by_title = {
-        str(item.get("title", "")).strip().lower(): str(item.get("deliverable") or "")
-        for item in (produced.get("roles") or [])
-    }
-    for idx, role in enumerate(role_rows):
-        content = by_title.get(role.title.strip().lower())
-        if content is None and idx < len(produced.get("roles") or []):
-            content = str(produced["roles"][idx].get("deliverable") or "")
-        if content:
-            role.deliverable = content
-        role.status = RoleStatus.COMPLETED
-        role.updated_at = datetime.now(timezone.utc)
-        session.add(role)
-
     now = datetime.now(timezone.utc)
     run = ExecutionRun(
-        objective_id=obj.id,
-        status=RunStatus.COMPLETED,
-        started_at=now,
-        completed_at=now,
-        deliverable=deliverable_text,
+        objective_id=obj.id, status=RunStatus.RUNNING, started_at=now
     )
     session.add(run)
     session.flush()
-
-    for i, step in enumerate(plan_steps):
-        title = str(step.get("title") or f"Step {i + 1}") if isinstance(step, dict) else str(step)
-        detail = step.get("detail") if isinstance(step, dict) else None
-        session.add(
-            ExecutionStep(
-                run_id=run.id,
-                index=i,
-                title=title,
-                status=StepStatus.COMPLETED,
-                output=(
-                    f"Coordinated and recorded: {detail}"
-                    if detail
-                    else "Coordinated and recorded by orchestration."
-                ),
-            )
-        )
-
-    obj.status = ObjectiveStatus.UNDER_AUDIT
+    obj.status = ObjectiveStatus.EXECUTING
     obj.updated_at = now
     session.add(obj)
-
     log_event(
         session,
         objective_id=obj.id,
-        kind="execution.completed",
-        message=(
-            f"Orchestrated {len(plan_steps)} execution step(s) and produced the "
-            f"deliverable; objective ready for validation."
-        ),
+        kind="execution.started",
+        message="Orchestrating execution — agents are producing deliverables…",
         actor="orchestration-engine",
-        data={"steps": len(plan_steps), "deliverable_source": deliverable.get("_source")},
     )
     session.commit()
+    run_id = run.id
+
+    background_tasks.add_task(_orchestrate_execution, obj.id, run_id)
+
     session.refresh(obj)
     return _detail(session, obj)
 
