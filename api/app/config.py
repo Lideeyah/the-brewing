@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     # CORS
     web_origin: str = "http://localhost:3000"
 
+    # Operators with access to the admin console (platform-wide metrics, revenue,
+    # feedback). Comma-separated emails; override via ADMIN_EMAILS.
+    admin_emails: str = "lydiasolomon137@gmail.com,thedevassist@gmail.com"
+
+    @property
+    def admin_email_set(self) -> set[str]:
+        return {e.strip().lower() for e in self.admin_emails.split(",") if e.strip()}
+
     # Anthropic — Coordination Copilot + execution orchestration
     anthropic_api_key: str = ""
     copilot_model: str = "claude-opus-4-7"

@@ -806,3 +806,51 @@ class OverviewOut(BaseModel):
     treasury_balance_usdc: str
     objectives: list[ObjectiveOut]
     recent_events: list[GovernanceEventOut]
+
+
+# --- Feedback & admin -------------------------------------------------------
+
+
+class FeedbackCreate(BaseModel):
+    message: str
+    category: str = "general"  # general | bug | feature | support
+
+
+class FeedbackOut(BaseModel):
+    id: str
+    email: str | None = None
+    name: str | None = None
+    category: str
+    message: str
+    status: str
+    created_at: datetime
+
+
+class AdminRecentObjective(BaseModel):
+    id: str
+    title: str
+    status: str
+    workspace: str | None = None
+    created_at: datetime
+
+
+class AdminRecentSettlement(BaseModel):
+    objective_id: str
+    status: str
+    amount_usdc: str
+    fee_usdc: str
+    created_at: datetime
+
+
+class AdminOverviewOut(BaseModel):
+    users_total: int
+    users_new_30d: int
+    workspaces_total: int
+    objectives_total: int
+    objectives_by_status: dict[str, int]
+    agents_total: int
+    settled_usdc_total: str
+    fees_usdc_total: str  # platform revenue
+    settlements_count: int
+    recent_objectives: list[AdminRecentObjective]
+    recent_settlements: list[AdminRecentSettlement]

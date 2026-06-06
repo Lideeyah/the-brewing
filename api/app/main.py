@@ -6,9 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.db import init_db
 from app.routers import (
+    admin,
     agents,
     analytics,
     auth,
+    feedback,
     health,
     objectives,
     trust,
@@ -48,6 +50,8 @@ app.include_router(agents.router)
 app.include_router(trust.router)
 app.include_router(validation.router)
 app.include_router(analytics.router)
+app.include_router(feedback.router)
+app.include_router(admin.router)
 
 
 @app.get("/")

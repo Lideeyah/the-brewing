@@ -639,3 +639,20 @@ class Settlement(SQLModel, table=True):
     payout_tx_ref: str | None = None
     payout_tx_hash: str | None = None  # resolved on-chain signature
     created_at: datetime = Field(default_factory=_now)
+
+
+class Feedback(SQLModel, table=True):
+    """User-submitted product feedback / support request.
+
+    Lightweight: any signed-in user can submit; operators read it from the admin
+    console. Distinct from FeedbackCommitment (agent reputation feedback).
+    """
+
+    id: str = Field(default_factory=_id, primary_key=True)
+    user_id: str | None = Field(default=None, foreign_key="user.id", index=True)
+    email: str | None = None
+    name: str | None = None
+    category: str = "general"  # general | bug | feature | support
+    message: str
+    status: str = Field(default="open", index=True)  # open | resolved
+    created_at: datetime = Field(default_factory=_now)
