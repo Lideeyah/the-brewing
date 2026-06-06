@@ -240,6 +240,58 @@ def evaluate_criteria(raw_criteria: object, evidence: list[dict]) -> list[dict]:
     return [evaluate_criterion(c, evidence) for c in normalize_criteria(raw_criteria)]
 
 
+def results_from_findings(
+    raw_criteria: object,
+    findings: list[dict],
+    evidence: list[dict] | None = None,
+) -> list[dict]:
+    """Build criterion results from the Copilot's LLM per-criterion findings.
+
+    The keyword engine cannot tell whether a free-text deliverable *means* a
+    criterion is met, so it returns mostly ``indeterminate``. The governance
+    Copilot already judged each criterion against the real deliverable
+    (``{criterion, met, assessment}``); this maps those semantic verdicts onto
+    the criteria, falling back to the keyword engine for any criterion with no
+    confident finding match. Result: an honest, evidence-grounded satisfaction
+    count instead of a hollow 0/N.
+    """
+    crits = normalize_criteria(raw_criteria)
+    findings = findings or []
+    used: set[int] = set()
+    out: list[dict] = []
+    for c in crits:
+        c_tokens = _tokens(c["description"])
+        best, best_score, best_i = None, 0.0, -1
+        for i, f in enumerate(findings):
+            if i in used:
+                continue
+            f_tokens = _tokens(str(f.get("criterion", "")))
+            if not c_tokens or not f_tokens:
+                continue
+            score = len(c_tokens & f_tokens) / len(c_tokens | f_tokens)
+            if score > best_score:
+                best, best_score, best_i = f, score, i
+        if best is not None and best_score >= 0.3:
+            used.add(best_i)
+            met = bool(best.get("met"))
+            shell = _result_shell(c)
+            shell.update(
+                {
+                    "satisfied": met,
+                    "confidence": 0.82 if met else 0.45,
+                    "rationale": str(
+                        best.get("assessment")
+                        or ("Met per governance review." if met else "Not met per governance review.")
+                    ),
+                    "basis": [],
+                }
+            )
+            out.append(shell)
+        else:
+            out.append(evaluate_criterion(c, evidence or []))
+    return out
+
+
 def summarize_satisfaction(results: list[dict]) -> dict:
     """Roll per-criterion results into an evidence-derived settlement verdict.
 

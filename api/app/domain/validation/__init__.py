@@ -309,6 +309,7 @@ def record_authorization(
     evidence: list[dict],
     approved: bool,
     role_id: str | None = None,
+    findings: list[dict] | None = None,
 ) -> SettlementAuthorization:
     """Persist the evidence-grounded authorization to settle an objective.
 
@@ -325,7 +326,14 @@ def record_authorization(
     the "why was this agent paid?" trail.
     """
 
-    results = criteria.evaluate_criteria(raw_criteria, evidence)
+    # Prefer the Copilot's semantic per-criterion verdicts (it read the real
+    # deliverable) over the keyword engine, which can't recognize satisfaction
+    # in free-text and returns a hollow 0/N. Falls back to keyword when no
+    # findings are available.
+    if findings:
+        results = criteria.results_from_findings(raw_criteria, findings, evidence)
+    else:
+        results = criteria.evaluate_criteria(raw_criteria, evidence)
     summary = criteria.summarize_satisfaction(results)
     digest = evidence_hash(evidence)
 

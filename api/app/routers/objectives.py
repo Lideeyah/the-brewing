@@ -1060,6 +1060,7 @@ async def validate_subtask(
             role_id=role.id,
         )
         # Authorize against THIS sub-task's own success criteria.
+        _sub_eval = _latest_evaluation(session, obj.id, role_id=role.id)
         authorization = validation.record_authorization(
             session,
             objective_id=obj.id,
@@ -1067,6 +1068,7 @@ async def validate_subtask(
             evidence=evidence_dicts,
             approved=record.recommendation != validation.REJECTED,
             role_id=role.id,
+            findings=(_sub_eval.findings if _sub_eval else None),
         )
     except Exception as exc:  # noqa: BLE001 — never 500 on a validation engine miss
         logger.warning("Sub-task validation engine error: %s", exc)
@@ -1585,12 +1587,14 @@ def decide_audit(
     # Never blocks the decision on an authorization miss.
     try:
         evidence_dicts = _objective_evidence(session, obj)
+        _eval = _latest_evaluation(session, obj.id)
         authorization = validation.record_authorization(
             session,
             objective_id=obj.id,
             raw_criteria=list(criteria),
             evidence=evidence_dicts,
             approved=approved,
+            findings=(_eval.findings if _eval else None),
         )
         log_event(
             session,
