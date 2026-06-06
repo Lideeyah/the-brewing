@@ -734,6 +734,7 @@ async def _orchestrate_execution(objective_id: str, run_id: str) -> None:
                     {"role_key": r.role_key, "title": r.title, "description": r.description}
                     for r in role_rows
                 ],
+                criteria=obj.governance_config.get("validation_criteria") or [],
             )
         except Exception as exc:  # noqa: BLE001 — never strand the objective
             logger.warning("Execution generation failed: %s", exc)

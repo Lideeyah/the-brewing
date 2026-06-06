@@ -603,6 +603,7 @@ async def generate_deliverables(
     definition_of_done: str | None = None,
     deadline: str | None = None,
     roles: list[dict] | None = None,
+    criteria: list | None = None,
 ) -> dict:
     """Produce a deliverable for each role plus a cumulative final work product.
 
@@ -632,32 +633,44 @@ async def generate_deliverables(
         # Delimiter format (not JSON) — markdown content can't break it the way
         # quotes/newlines break JSON, so parsing is robust.
         template = "\n".join(f"===ROLE: {r.get('title')}===\n<contribution>" for r in roles)
+        criteria_block = ""
+        crit_lines = [
+            f"- {c.get('description') if isinstance(c, dict) else c}"
+            for c in (criteria or [])
+        ]
+        if crit_lines:
+            criteria_block = (
+                "\nThe finished work will be judged against these acceptance "
+                "criteria — satisfy EVERY one explicitly (include the structures "
+                "they ask for, e.g. per-item breakdowns, dated sources, summaries):\n"
+                + "\n".join(crit_lines)
+                + "\n"
+            )
         user_msg = (
             f"Objective: {title or intent}\n\nIntent:\n{intent}\n\n"
             f"Definition of done: {definition_of_done or 'use professional judgment'}\n"
-            f"Deadline: {deadline or 'n/a'}\n\n"
+            f"Deadline: {deadline or 'n/a'}\n"
+            f"{criteria_block}\n"
             f"A coordinated multi-agent team holds these roles:\n{roster}\n\n"
             "Produce each role's concrete contribution, then a cumulative final "
             "deliverable that integrates them into the finished work product the "
-            "objective asked for. Keep it tight and decision-ready: roughly "
-            "60-100 words per role contribution, and a focused 250-350 word "
-            "cumulative. Specific over verbose.\n\n"
+            "objective asked for. Be complete and rigorous — a reviewer will check "
+            "it against the acceptance criteria, so include every element they "
+            "require (tables, per-item lists, sources, an executive summary, and "
+            "supporting analysis). Substance over brevity.\n\n"
             "Output EXACTLY in this format, using these delimiter lines verbatim "
             "and nothing before the first one:\n\n"
             f"{template}\n===CUMULATIVE===\n<final integrated deliverable>"
         )
         async with _pacemaker:
             await asyncio.sleep(settings.orchestration_pacemaker_seconds)
-            # Hard time cap: a slow generation must not hang the request until an
-            # upstream proxy cuts it (a 500 with no app log). On timeout we fall
-            # through to the heuristic so execution always completes.
+            # Generation runs in a background task (not the HTTP request), so it's
+            # free to produce a complete deliverable; the timeout is just a safety
+            # net that falls back to the heuristic if the model stalls.
             resp = await asyncio.wait_for(
                 client.messages.create(
                     model=settings.copilot_model,
-                    # Hard output cap keeps generation under the time budget on a
-                    # slow model (~40 tok/s); the prompt already asks for concise,
-                    # decision-ready content, so this rarely truncates.
-                    max_tokens=1000,
+                    max_tokens=4000,
                     system=_DELIVERABLE_SYSTEM,
                     messages=[{"role": "user", "content": user_msg}],
                 ),

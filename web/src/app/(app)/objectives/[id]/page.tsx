@@ -434,7 +434,8 @@ export default async function ObjectiveDetailPage({
                       Agents are producing deliverables…
                     </p>
                     <p className="text-[12px] text-muted">
-                      This takes ~20 seconds. The results appear here automatically.
+                      This can take a minute or two. The results appear here
+                      automatically — no need to refresh.
                     </p>
                   </div>
                 </PanelBody>
