@@ -639,18 +639,29 @@ async def generate_deliverables(
             f"A coordinated multi-agent team holds these roles:\n{roster}\n\n"
             "Produce each role's concrete contribution, then a cumulative final "
             "deliverable that integrates them into the finished work product the "
-            "objective asked for. Be substantive and specific.\n\n"
+            "objective asked for. Keep it tight and decision-ready: roughly "
+            "60-100 words per role contribution, and a focused 250-350 word "
+            "cumulative. Specific over verbose.\n\n"
             "Output EXACTLY in this format, using these delimiter lines verbatim "
             "and nothing before the first one:\n\n"
             f"{template}\n===CUMULATIVE===\n<final integrated deliverable>"
         )
         async with _pacemaker:
             await asyncio.sleep(settings.orchestration_pacemaker_seconds)
-            resp = await client.messages.create(
-                model=settings.copilot_model,
-                max_tokens=8000,
-                system=_DELIVERABLE_SYSTEM,
-                messages=[{"role": "user", "content": user_msg}],
+            # Hard time cap: a slow generation must not hang the request until an
+            # upstream proxy cuts it (a 500 with no app log). On timeout we fall
+            # through to the heuristic so execution always completes.
+            resp = await asyncio.wait_for(
+                client.messages.create(
+                    model=settings.copilot_model,
+                    # Hard output cap keeps generation under the time budget on a
+                    # slow model (~40 tok/s); the prompt already asks for concise,
+                    # decision-ready content, so this rarely truncates.
+                    max_tokens=1000,
+                    system=_DELIVERABLE_SYSTEM,
+                    messages=[{"role": "user", "content": user_msg}],
+                ),
+                timeout=settings.deliverable_timeout_seconds,
             )
         text = "".join(
             b.text for b in resp.content if getattr(b, "type", None) == "text"

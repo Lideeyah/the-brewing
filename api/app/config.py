@@ -54,6 +54,9 @@ class Settings(BaseSettings):
 
     # Rate-limit pacemaker for downstream Claude calls (seconds)
     orchestration_pacemaker_seconds: float = 3.5
+    # Hard cap on deliverable generation so a slow model can't hang the request
+    # until an upstream proxy cuts it; on timeout execution uses the heuristic.
+    deliverable_timeout_seconds: float = 28.0
 
     # Settlement provider selection (provider-agnostic domain; Circle is first impl)
     settlement_provider: str = "circle"
