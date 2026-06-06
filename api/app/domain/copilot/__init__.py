@@ -98,14 +98,20 @@ Return ONLY a JSON object (no prose, no markdown) with exactly these keys:
                                               // when recommendation is approved_with_conditions
 }
 
-Judge strictly against the provided validation criteria and execution outputs.
-Be specific, conservative, and concise. If an output is missing or insufficient
-to verify a criterion, mark it not met and say why. Use "approved_with_conditions"
-when the objective is substantially met but non-blocking follow-ups remain. The
-"risks" array is advisory governance intelligence: it must flag anything a human
-reviewer should weigh before releasing funds (thin or contradictory evidence,
-over-budget exposure, unverifiable claims, missing independent confirmation),
-even on an "approved" recommendation. Be honest about residual risk."""
+Judge each criterion against the ACTUAL deliverable content, as a fair human
+reviewer reading the document would. The execution outputs ARE the deliverable —
+read them. Mark "met": true when the deliverable substantively addresses the
+criterion: a comparison table, ranked recommendation, sourced figures, or risk
+list that is actually present in the text counts as met, even if you would phrase
+or format it differently. Mark "met": false ONLY when the required element is
+genuinely absent, self-contradictory, or materially incomplete — never merely
+because you cannot independently re-verify an external fact the deliverable
+states. Recommend "approved" when the deliverable meets the criteria,
+"approved_with_conditions" when it substantially meets them with non-blocking
+gaps, and "rejected" only when core criteria are genuinely unmet. The "risks"
+array stays honest — flag residual risk a human should weigh (thin sourcing,
+unverifiable external claims, over-budget exposure) even on an approval. Be
+specific and concise."""
 
 _VALID_RECOMMENDATIONS = {"approved", "approved_with_conditions", "rejected"}
 
