@@ -1,7 +1,8 @@
 """Operator admin console — platform-wide metrics, revenue, and feedback.
 
-Read-only and gated to the configured admin emails. This is the operator's view
-*across all workspaces*, distinct from a workspace's own Mission Control.
+A *separate* surface from the product: no product login is involved. Gated by a
+shared secret (X-Admin-Secret) so the standalone admin app — not workspace users
+— is the only caller. Read-only view across all workspaces.
 """
 
 from __future__ import annotations
@@ -9,10 +10,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlmodel import Session, select
 
-from app.auth import get_current_user
 from app.config import get_settings
 from app.db import get_session
 from app.models import (
@@ -34,12 +34,14 @@ from app.schemas import (
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
-def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.email.lower() not in get_settings().admin_email_set:
+def require_admin(x_admin_secret: str | None = Header(default=None)) -> bool:
+    """Gate admin endpoints by a shared secret — no product login involved."""
+    secret = get_settings().admin_secret
+    if not secret or x_admin_secret != secret:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required."
         )
-    return user
+    return True
 
 
 def _dec(value: str | None) -> Decimal:
@@ -51,7 +53,7 @@ def _dec(value: str | None) -> Decimal:
 
 @router.get("/overview", response_model=AdminOverviewOut)
 def admin_overview(
-    _: User = Depends(require_admin),
+    _: bool = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> AdminOverviewOut:
     users = list(session.exec(select(User)).all())
@@ -111,7 +113,7 @@ def admin_overview(
 
 @router.get("/feedback", response_model=list[FeedbackOut])
 def admin_feedback(
-    _: User = Depends(require_admin),
+    _: bool = Depends(require_admin),
     session: Session = Depends(get_session),
 ) -> list[FeedbackOut]:
     rows = session.exec(

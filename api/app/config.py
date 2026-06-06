@@ -48,13 +48,10 @@ class Settings(BaseSettings):
     # CORS
     web_origin: str = "http://localhost:3000"
 
-    # Operators with access to the admin console (platform-wide metrics, revenue,
-    # feedback). Comma-separated emails; override via ADMIN_EMAILS.
-    admin_emails: str = "lydiasolomon137@gmail.com,thedevassist@gmail.com"
-
-    @property
-    def admin_email_set(self) -> set[str]:
-        return {e.strip().lower() for e in self.admin_emails.split(",") if e.strip()}
+    # Admin console is a *separate* surface from the product: it has no product
+    # login and is gated by this shared secret (sent as X-Admin-Secret by the
+    # standalone admin app). Blank = admin API disabled. Set ADMIN_SECRET.
+    admin_secret: str = ""
 
     # Anthropic — Coordination Copilot + execution orchestration
     anthropic_api_key: str = ""
