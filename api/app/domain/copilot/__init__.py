@@ -658,15 +658,20 @@ async def generate_deliverables(
             f"Deadline: {deadline or 'n/a'}\n"
             f"{criteria_block}\n"
             f"A coordinated multi-agent team holds these roles:\n{roster}\n\n"
-            "Produce each role's concrete contribution, then a cumulative final "
-            "deliverable that integrates them into the finished work product the "
-            "objective asked for. Be complete and rigorous — a reviewer will check "
-            "it against the acceptance criteria, so include every element they "
-            "require (tables, per-item lists, sources, an executive summary, and "
-            "supporting analysis). Substance over brevity.\n\n"
+            "Format rules — follow exactly:\n"
+            "1) For EACH role, write a SHORT contribution note: 2–4 sentences "
+            "(≈60–100 words) on what that role did. These are brief notes, not the "
+            "deliverable — do NOT write the full report inside a role.\n"
+            "2) Then write the CUMULATIVE section: the COMPLETE, finished work "
+            "product the objective asked for (≈600–900 words). This is the primary "
+            "deliverable and the part a reviewer grades — it MUST be fully written "
+            "end to end (no truncation, no placeholders, no 'see above'), and must "
+            "explicitly include every element the acceptance criteria require "
+            "(comparison table, per-item lists, sources, ranked recommendation, "
+            "executive summary). Spend the bulk of your effort here.\n\n"
             "Output EXACTLY in this format, using these delimiter lines verbatim "
             "and nothing before the first one:\n\n"
-            f"{template}\n===CUMULATIVE===\n<final integrated deliverable>"
+            f"{template}\n===CUMULATIVE===\n<the complete finished deliverable>"
         )
         async with _pacemaker:
             await asyncio.sleep(settings.orchestration_pacemaker_seconds)
@@ -676,7 +681,9 @@ async def generate_deliverables(
             resp = await asyncio.wait_for(
                 client.messages.create(
                     model=settings.copilot_model,
-                    max_tokens=4000,
+                    # Headroom so a complete deliverable never truncates; the
+                    # prompt caps role notes, so the cumulative gets the budget.
+                    max_tokens=5000,
                     system=_DELIVERABLE_SYSTEM,
                     messages=[{"role": "user", "content": user_msg}],
                 ),

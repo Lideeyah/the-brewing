@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # Safety net for deliverable generation. It runs in a background task (not the
     # HTTP request), so this can be generous; on timeout execution falls back to
     # the heuristic rather than stranding the objective.
-    deliverable_timeout_seconds: float = 150.0
+    deliverable_timeout_seconds: float = 120.0
 
     # Settlement provider selection (provider-agnostic domain; Circle is first impl)
     settlement_provider: str = "circle"
