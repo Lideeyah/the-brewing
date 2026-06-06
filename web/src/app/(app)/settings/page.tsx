@@ -4,6 +4,7 @@ import { Topbar } from "@/components/app/topbar";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SignOutButton } from "@/components/app/sign-out-button";
+import { FeedbackForm } from "@/components/app/feedback-form";
 import { apiGet } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
@@ -142,6 +143,17 @@ export default async function SettingsPage() {
                       </div>
                     )}
                   </div>
+                </PanelBody>
+              </Panel>
+
+              {/* Feedback */}
+              <Panel>
+                <PanelHeader
+                  title="Send feedback"
+                  meta="bugs · features · support"
+                />
+                <PanelBody>
+                  <FeedbackForm />
                 </PanelBody>
               </Panel>
 

@@ -531,3 +531,16 @@ export async function activateOnboarding() {
   revalidatePath("/onboarding/orientation");
   redirect("/onboarding/orientation");
 }
+
+/** Product feedback / support: any signed-in user submits; admins read it. */
+export async function submitFeedback(formData: FormData) {
+  const message = (formData.get("message") as string | null)?.trim();
+  const category = (formData.get("category") as string | null)?.trim() || "general";
+  if (!message) return { ok: false, message: "Message is required." };
+  try {
+    await apiPost("/feedback", { message, category });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: apiErrorMessage(err) };
+  }
+}

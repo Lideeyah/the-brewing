@@ -582,3 +582,45 @@ export interface Me {
   workspace: MeWorkspace;
   role: string;
 }
+
+// --- Admin console + feedback ---------------------------------------------
+
+export interface AdminRecentObjective {
+  id: string;
+  title: string;
+  status: string;
+  workspace?: string | null;
+  created_at: string;
+}
+
+export interface AdminRecentSettlement {
+  objective_id: string;
+  status: string;
+  amount_usdc: string;
+  fee_usdc: string;
+  created_at: string;
+}
+
+export interface AdminOverview {
+  users_total: number;
+  users_new_30d: number;
+  workspaces_total: number;
+  objectives_total: number;
+  objectives_by_status: Record<string, number>;
+  agents_total: number;
+  settled_usdc_total: string;
+  fees_usdc_total: string;
+  settlements_count: number;
+  recent_objectives: AdminRecentObjective[];
+  recent_settlements: AdminRecentSettlement[];
+}
+
+export interface FeedbackItem {
+  id: string;
+  email?: string | null;
+  name?: string | null;
+  category: string;
+  message: string;
+  status: string;
+  created_at: string;
+}
