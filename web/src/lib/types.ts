@@ -217,7 +217,11 @@ export interface AssignedAgent {
 export type RoleStatus = "pending" | "assigned" | "completed" | "failed";
 
 export type SubTaskValidationStatus = "pending" | "passed" | "failed";
-export type SubTaskSettlementStatus = "pending" | "settled" | "slashed";
+export type SubTaskSettlementStatus =
+  | "pending"
+  | "settled"
+  | "slashed"
+  | "disputed";
 
 export interface WorkflowRole {
   id: string;

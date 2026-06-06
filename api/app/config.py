@@ -87,6 +87,12 @@ class Settings(BaseSettings):
     platform_fee_wallet_address: str = ""
     platform_fee_wallet_id: str = ""
 
+    # Where slashed escrow goes. It must NOT return to the requester's treasury —
+    # otherwise a buyer could reject delivered work, reclaim the capital, and keep
+    # the result for free. Slashed funds go to this neutral network/dispute pool.
+    # Defaults to the platform fee wallet when unset.
+    slash_pool_wallet_address: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.environment == "production"

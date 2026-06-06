@@ -1877,13 +1877,76 @@ def settle_objective(
         else:
             # Slash only the escrow not already resolved at the sub-task level.
             amount = remaining
+            from app.config import get_settings as _get_settings
+
+            settings = _get_settings()
+
+            # #2 — A human cannot UNILATERALLY slash work the INDEPENDENT validator
+            # passed. That routes to a DISPUTE with escrow HELD (not refunded to the
+            # requester), so "reject, keep the capital, and use the result anyway"
+            # is not a profitable move — the funds are frozen until the dispute
+            # resolves, not handed back.
+            val_record = validation.latest_record(session, obj.id)
+            contested = bool(
+                val_record
+                and val_record.recommendation
+                in ("approved", "approved_with_conditions")
+            )
+            if contested:
+                obj.status = ObjectiveStatus.DISPUTED
+                obj.updated_at = datetime.now(timezone.utc)
+                session.add(obj)
+                for role in session.exec(
+                    select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+                ).all():
+                    if role.settlement_status == "pending":
+                        role.settlement_status = "disputed"
+                        role.updated_at = datetime.now(timezone.utc)
+                        session.add(role)
+                log_event(
+                    session,
+                    objective_id=obj.id,
+                    kind="objective.disputed",
+                    message=(
+                        "Reviewer rejected work the independent validator passed — "
+                        "escrow is HELD pending dispute resolution. Funds are not "
+                        "returned to the requester, so the result cannot be taken "
+                        "for free."
+                    ),
+                    actor=user.id,
+                    data={
+                        "held_usdc": str(amount),
+                        "validator_recommendation": val_record.recommendation,
+                    },
+                )
+                session.commit()
+                session.refresh(obj)
+                return _detail(session, obj)
+
+            # #1 — Uncontested slash (the evidence agrees the work failed): the
+            # escrow goes to the neutral network/dispute pool, NEVER back to the
+            # requester's treasury, so rejecting can never refund the buyer.
+            pool_addr = (
+                settings.slash_pool_wallet_address
+                or settings.platform_fee_wallet_address
+                or ""
+            ).strip()
+            slash_dest = (
+                WalletRef(
+                    provider_wallet_id="",
+                    address=pool_addr,
+                    blockchain=settings.circle_blockchain,
+                )
+                if pool_addr
+                else treasury_ref
+            )
             transfer = provider.slash_escrow(
                 EscrowRef(
                     provider_escrow_id=escrow.provider_escrow_id or "",
                     address=escrow.address or "",
                     amount=amount,
                 ),
-                treasury_ref,
+                slash_dest,
             )
             escrow.status = EscrowStatus.SLASHED
             escrow.settle_tx_ref = transfer.tx_ref
@@ -1909,15 +1972,22 @@ def settle_objective(
                     role.outcome = role.outcome or "slashed"
                     role.updated_at = datetime.now(timezone.utc)
                     session.add(role)
+            to_pool = bool(pool_addr)
             log_event(
                 session,
                 objective_id=obj.id,
                 kind="escrow.slashed",
-                message=f"Slashed {amount} USDC back to treasury after governance rejection.",
+                message=(
+                    f"Slashed {amount} USDC to the neutral network pool "
+                    "(not refunded to the requester) after governance rejection."
+                    if to_pool
+                    else f"Slashed {amount} USDC after governance rejection."
+                ),
                 actor=user.id,
                 data={
                     "amount_usdc": str(amount),
-                    "treasury_address": treasury.address,
+                    "destination": "network_pool" if to_pool else "treasury",
+                    "destination_address": pool_addr or treasury.address,
                     "slash_tx_ref": transfer.tx_ref,
                 },
             )
