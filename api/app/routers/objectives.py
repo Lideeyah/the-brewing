@@ -764,6 +764,13 @@ async def _orchestrate_execution(objective_id: str, run_id: str) -> None:
             if content:
                 role.deliverable = content
             role.status = RoleStatus.COMPLETED
+            # The agent produced its contribution, so the sub-task is done and its
+            # evidence is accepted into the coordination graph — mark it validated
+            # so dependent waves unblock instead of reading "BLOCKED" forever.
+            # (The objective-level governance decision remains the authoritative
+            # gate; settlement is still pending until the objective settles.)
+            if role.validation_status == "pending":
+                role.validation_status = "passed"
             role.updated_at = datetime.now(timezone.utc)
             session.add(role)
 
@@ -1864,6 +1871,16 @@ def settle_objective(
                 )
             )
             obj.status = ObjectiveStatus.SLASHED
+            # Objective was rejected — reflect that on its sub-task rows.
+            for role in session.exec(
+                select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+            ).all():
+                if role.settlement_status == "pending":
+                    role.validation_status = "failed"
+                    role.settlement_status = "slashed"
+                    role.outcome = role.outcome or "slashed"
+                    role.updated_at = datetime.now(timezone.utc)
+                    session.add(role)
             log_event(
                 session,
                 objective_id=obj.id,
