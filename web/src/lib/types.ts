@@ -613,6 +613,8 @@ export interface AdminOverview {
   settlements_count: number;
   recent_objectives: AdminRecentObjective[];
   recent_settlements: AdminRecentSettlement[];
+  platform_fee_wallet_address?: string | null;
+  platform_fee_balance_usdc?: string | null;
 }
 
 export interface FeedbackItem {

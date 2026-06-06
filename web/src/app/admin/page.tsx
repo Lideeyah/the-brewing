@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
+import { FeeWallet } from "@/components/admin/fee-wallet";
 import { adminLogout } from "@/lib/admin-actions";
 import { adminApiGet, isAdminAuthed } from "@/lib/admin-server";
 import type { AdminOverview, FeedbackItem } from "@/lib/types";
@@ -74,6 +75,18 @@ export default async function AdminPage() {
             />
             <Metric label="Platform revenue" value={`${ov.fees_usdc_total} USDC`} hint="fees collected" />
           </div>
+
+          {/* Platform revenue wallet — address, balance, withdraw */}
+          <Panel>
+            <PanelHeader
+              title="Platform revenue wallet"
+              meta="fees collected here · withdraw to any address"
+            />
+            <FeeWallet
+              address={ov.platform_fee_wallet_address}
+              balance={ov.platform_fee_balance_usdc}
+            />
+          </Panel>
 
           <Panel>
             <PanelHeader title="Objectives by status" meta="lifecycle distribution" />

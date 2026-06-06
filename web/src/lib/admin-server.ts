@@ -32,3 +32,30 @@ export async function adminApiGet<T>(path: string): Promise<T | null> {
     return null;
   }
 }
+
+/** POST to the admin API using the shared secret. Returns {ok, data|error}. */
+export async function adminApiPost<T>(
+  path: string,
+  body: unknown,
+): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
+  if (!ADMIN_SECRET) return { ok: false, error: "Admin not configured." };
+  try {
+    const res = await fetch(`${API}${path}`, {
+      method: "POST",
+      headers: {
+        "X-Admin-Secret": ADMIN_SECRET,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const detail = (json as { detail?: unknown }).detail;
+      return { ok: false, error: typeof detail === "string" ? detail : "Request failed." };
+    }
+    return { ok: true, data: json as T };
+  } catch {
+    return { ok: false, error: "Network error." };
+  }
+}

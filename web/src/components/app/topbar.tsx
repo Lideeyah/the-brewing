@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Plus } from "lucide-react";
 
 import { auth } from "@/auth";
-import { StatusPill } from "@/components/ui/status-pill";
 import { UserMenu } from "@/components/app/user-menu";
 import { FeedbackButton } from "@/components/app/feedback-button";
 
@@ -30,7 +29,15 @@ export async function Topbar({
       </div>
 
       <div className="flex items-center gap-3">
-        <StatusPill tone="active">{prettyNetwork(network)}</StatusPill>
+        <span
+          className="hidden items-center gap-1.5 rounded-full border border-border px-2 py-0.5 sm:inline-flex"
+          title={`Settlement network: ${prettyNetwork(network)}`}
+        >
+          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+          <span className="font-operational text-[10px] uppercase tracking-wider text-muted">
+            {prettyNetwork(network)}
+          </span>
+        </span>
 
         <Link
           href="/coordinate"
