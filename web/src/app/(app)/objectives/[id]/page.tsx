@@ -5,6 +5,7 @@ import {
   Check,
   ExternalLink,
   Fingerprint,
+  Loader2,
   ShieldCheck,
   Sparkles,
   X,
@@ -24,6 +25,7 @@ import { ProvenanceChain } from "@/components/app/provenance-chain";
 import { SettlementRationale } from "@/components/app/settlement-rationale";
 import { GovernanceRisks } from "@/components/app/governance-risks";
 import { EvidenceTrail } from "@/components/app/evidence-trail";
+import { ExecutingPoller } from "@/components/app/executing-poller";
 import { Markdown } from "@/components/ui/markdown";
 import { OnChainLedger } from "@/components/app/onchain-ledger";
 import { ApiError, apiGet } from "@/lib/api";
@@ -68,6 +70,7 @@ export default async function ObjectiveDetailPage({
   const escrow = obj.escrow;
   const canLockEscrow = obj.status === "copilot_structured";
   const execution = obj.execution;
+  const isExecuting = obj.status === "executing";
   const agentResults = obj.workflow.filter((r) => r.deliverable);
   const evaluation = obj.evaluation;
   const validation = obj.validation;
@@ -380,9 +383,13 @@ export default async function ObjectiveDetailPage({
                   <Field
                     label="Deadline"
                     value={
-                      asString(sla?.deadline_hours)
+                      // Operator's stated deadline wins; only fall back to the
+                      // Copilot's invented deadline_hours when none was set.
+                      obj.deadline ??
+                      asString(sla?.deadline) ??
+                      (asString(sla?.deadline_hours)
                         ? `${asString(sla?.deadline_hours)}h`
-                        : "—"
+                        : "—")
                     }
                     mono
                   />
@@ -413,6 +420,26 @@ export default async function ObjectiveDetailPage({
                 </PanelBody>
               </Panel>
             </div>
+          )}
+
+          {/* Execution in progress — deliverables generate in the background */}
+          {isExecuting && (
+            <>
+              <ExecutingPoller active />
+              <Panel className="mt-4 bg-surface">
+                <PanelBody className="flex items-center gap-3 py-5">
+                  <Loader2 size={18} className="shrink-0 animate-spin text-accent" />
+                  <div>
+                    <p className="text-[13px] font-medium text-foreground">
+                      Agents are producing deliverables…
+                    </p>
+                    <p className="text-[12px] text-muted">
+                      This takes ~20 seconds. The results appear here automatically.
+                    </p>
+                  </div>
+                </PanelBody>
+              </Panel>
+            </>
           )}
 
           {/* Deliverable — the cumulative produced result */}
