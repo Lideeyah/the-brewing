@@ -61,8 +61,11 @@ class Settings(BaseSettings):
     orchestration_pacemaker_seconds: float = 3.5
     # Safety net for deliverable generation. It runs in a background task (not the
     # HTTP request), so this can be generous; on timeout execution falls back to
-    # the heuristic rather than stranding the objective.
-    deliverable_timeout_seconds: float = 120.0
+    # the heuristic rather than stranding the objective. The tool-use loop (live
+    # fetching) needs more headroom than a single call.
+    deliverable_timeout_seconds: float = 200.0
+    # Let executing agents call real tools (web fetch) and record proof-of-work.
+    enable_agent_tools: bool = True
 
     # Settlement provider selection (provider-agnostic domain; Circle is first impl)
     settlement_provider: str = "circle"

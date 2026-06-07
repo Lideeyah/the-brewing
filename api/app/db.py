@@ -50,6 +50,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     },
     "executionrun": {
         "deliverable": "VARCHAR",
+        "sources": "JSON NOT NULL DEFAULT '[]'",
     },
     "agentidentity": {
         "description": "VARCHAR",

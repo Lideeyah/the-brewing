@@ -302,6 +302,10 @@ class ExecutionRun(SQLModel, table=True):
     # The finished work product produced by execution (Markdown). This is what an
     # operator reads as "the result" — distinct from per-step outputs/evidence.
     deliverable: str | None = None
+    # Proof-of-work: sources the agents actually fetched during execution, each
+    # with a sha256 of the retrieved content — list of
+    # {url, ok, status, title, sha256, bytes, fetched_at}.
+    sources: list = Field(default_factory=list, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=_now)
 
 

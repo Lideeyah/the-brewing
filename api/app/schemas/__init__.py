@@ -135,12 +135,25 @@ class ExecutionStepOut(BaseModel):
     output: str | None = None
 
 
+class SourceProof(BaseModel):
+    """A source an agent actually fetched during execution (proof-of-work)."""
+
+    url: str
+    ok: bool = False
+    status: int | None = None
+    title: str | None = None
+    sha256: str | None = None
+    bytes: int | None = None
+    fetched_at: str | None = None
+
+
 class ExecutionRunOut(BaseModel):
     id: str
     status: str
     started_at: datetime | None = None
     completed_at: datetime | None = None
     deliverable: str | None = None
+    sources: list[SourceProof] = []
     steps: list[ExecutionStepOut]
 
 

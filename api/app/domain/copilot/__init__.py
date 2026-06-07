@@ -580,7 +580,7 @@ def _heuristic_role_deliverables(
             }
         )
     cumulative = _heuristic_deliverable(intent, title, definition_of_done)["content"]
-    return {"roles": out_roles, "cumulative": cumulative, "_source": "heuristic"}
+    return {"roles": out_roles, "cumulative": cumulative, "sources": [], "_source": "heuristic"}
 
 
 def _parse_delimited_deliverables(text: str) -> tuple[list[dict], str]:
@@ -625,11 +625,13 @@ async def generate_deliverables(
             single = await generate_deliverable(
                 intent, title, definition_of_done=definition_of_done, deadline=deadline
             )
-            return {"roles": [], "cumulative": single["content"], "_source": single["_source"]}
+            return {"roles": [], "cumulative": single["content"], "sources": [], "_source": single["_source"]}
         return _heuristic_role_deliverables(intent, title, roles, definition_of_done)
 
     try:
         from anthropic import AsyncAnthropic
+
+        from app.domain.agent_tools import FETCH_URL_TOOL, fetch_url
 
         client = AsyncAnthropic(api_key=settings.anthropic_api_key)
         roster = "\n".join(
@@ -652,43 +654,121 @@ async def generate_deliverables(
                 + "\n".join(crit_lines)
                 + "\n"
             )
-        user_msg = (
-            f"Objective: {title or intent}\n\nIntent:\n{intent}\n\n"
-            f"Definition of done: {definition_of_done or 'use professional judgment'}\n"
-            f"Deadline: {deadline or 'n/a'}\n"
-            f"{criteria_block}\n"
-            f"A coordinated multi-agent team holds these roles:\n{roster}\n\n"
-            "Format rules — follow exactly:\n"
-            "1) For EACH role, write a SHORT contribution note: 2–4 sentences "
-            "(≈60–100 words) on what that role did. These are brief notes, not the "
-            "deliverable — do NOT write the full report inside a role.\n"
-            "2) Then write the CUMULATIVE section: the COMPLETE, finished work "
-            "product the objective asked for (≈600–900 words). This is the primary "
-            "deliverable and the part a reviewer grades — it MUST be fully written "
-            "end to end (no truncation, no placeholders, no 'see above'), and must "
-            "explicitly include every element the acceptance criteria require "
-            "(comparison table, per-item lists, sources, ranked recommendation, "
-            "executive summary). Spend the bulk of your effort here.\n\n"
-            "Output EXACTLY in this format, using these delimiter lines verbatim "
-            "and nothing before the first one:\n\n"
-            f"{template}\n===CUMULATIVE===\n<the complete finished deliverable>"
+        use_tools = bool(settings.enable_agent_tools)
+        sources: list[dict] = []
+        max_fetches = 3
+
+        # PHASE 1 — RESEARCH (best-effort, with tools). The agent fetches a few
+        # real sources and reports verified, sourced facts. Every fetch is
+        # captured as proof-of-work. A failed/blocked fetch never derails the
+        # deliverable: phase 2 writes from knowledge if research came up empty, so
+        # quality can never regress below the no-tools path.
+        _RESEARCH_SYSTEM = (
+            "You are a research agent with REAL web access via fetch_url. Fetch a "
+            "few authoritative or primary sources, then report only verified facts, "
+            "each with its source URL. Do not write a report."
         )
+
+        async def _research() -> str:
+            rmsg = (
+                f"Research this objective so it can be written accurately:\n"
+                f"{title or intent}\n\nIntent: {intent}\n\n"
+                "Fetch 2–3 authoritative or primary sources (provider docs, block "
+                "explorers, official data) and extract the key figures — fees, "
+                "finality, throughput, dates, prices. Then return a concise bullet "
+                "list of verified facts, each with its source URL. Just the sourced "
+                "facts, no report. If a fetch fails, try a different URL but stop "
+                "after a few attempts."
+            )
+            messages: list = [{"role": "user", "content": rmsg}]
+            for _ in range(6):
+                kwargs: dict = {
+                    "model": settings.copilot_model,
+                    "max_tokens": 1200,
+                    "system": _RESEARCH_SYSTEM,
+                    "messages": messages,
+                }
+                if len(sources) < max_fetches:
+                    kwargs["tools"] = [FETCH_URL_TOOL]
+                resp = await client.messages.create(**kwargs)
+                if resp.stop_reason == "tool_use":
+                    messages.append({"role": "assistant", "content": resp.content})
+                    results = []
+                    for block in resp.content:
+                        if getattr(block, "type", None) == "tool_use" and block.name == "fetch_url":
+                            rec = await fetch_url((block.input or {}).get("url", ""))
+                            sources.append(
+                                {
+                                    k: rec.get(k)
+                                    for k in ("url", "ok", "status", "title", "sha256", "bytes", "fetched_at")
+                                }
+                            )
+                            body = (rec.get("text") or rec.get("error") or "")[:2500]
+                            results.append(
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": block.id,
+                                    "content": (
+                                        f"URL: {rec.get('url')}\nok={rec.get('ok')} "
+                                        f"sha256={rec.get('sha256', '')}\n\n{body}"
+                                    ),
+                                }
+                            )
+                    messages.append({"role": "user", "content": results})
+                    continue
+                return "".join(
+                    b.text for b in resp.content if getattr(b, "type", None) == "text"
+                )
+            return ""
+
+        # PHASE 2 — WRITE (no tools): the proven, reliable generation, grounded in
+        # the researched facts.
+        facts = ""
         async with _pacemaker:
             await asyncio.sleep(settings.orchestration_pacemaker_seconds)
-            # Generation runs in a background task (not the HTTP request), so it's
-            # free to produce a complete deliverable; the timeout is just a safety
-            # net that falls back to the heuristic if the model stalls.
+            if use_tools:
+                try:
+                    facts = await asyncio.wait_for(_research(), timeout=90.0)
+                except Exception as exc:  # noqa: BLE001 — research is best-effort
+                    logger.warning("Agent research phase failed/timed out: %s", exc)
+
+            facts_block = (
+                "\nVerified sources & facts the team retrieved — ground the "
+                "deliverable in these and cite the URLs:\n" + facts.strip() + "\n"
+                if facts.strip()
+                else ""
+            )
+            user_msg = (
+                f"Objective: {title or intent}\n\nIntent:\n{intent}\n\n"
+                f"Definition of done: {definition_of_done or 'use professional judgment'}\n"
+                f"Deadline: {deadline or 'n/a'}\n"
+                f"{criteria_block}"
+                f"{facts_block}\n"
+                f"A coordinated multi-agent team holds these roles:\n{roster}\n\n"
+                "Format rules — follow exactly:\n"
+                "1) For EACH role, write a SHORT contribution note: 2–4 sentences "
+                "(≈60–100 words) on what that role did. These are brief notes, not "
+                "the deliverable — do NOT write the full report inside a role.\n"
+                "2) Then write the CUMULATIVE section: the COMPLETE, finished work "
+                "product the objective asked for (≈600–900 words). It MUST be fully "
+                "written end to end (no truncation, no placeholders), include every "
+                "element the acceptance criteria require (comparison table, per-item "
+                "lists, sources with URLs, ranked recommendation, executive "
+                "summary), and cite the source URLs above where used.\n\n"
+                "Output EXACTLY in this format, using these delimiter lines verbatim "
+                "and nothing before the first one:\n\n"
+                f"{template}\n===CUMULATIVE===\n<the complete finished deliverable>"
+            )
             resp = await asyncio.wait_for(
                 client.messages.create(
                     model=settings.copilot_model,
-                    # Headroom so a complete deliverable never truncates; the
-                    # prompt caps role notes, so the cumulative gets the budget.
                     max_tokens=5000,
                     system=_DELIVERABLE_SYSTEM,
                     messages=[{"role": "user", "content": user_msg}],
                 ),
-                timeout=settings.deliverable_timeout_seconds,
+                timeout=110.0,
             )
+
         text = "".join(
             b.text for b in resp.content if getattr(b, "type", None) == "text"
         )
@@ -699,7 +779,12 @@ async def generate_deliverables(
             )
         if not cumulative:
             raise ValueError("empty deliverables")
-        return {"roles": role_items, "cumulative": cumulative, "_source": settings.copilot_model}
+        return {
+            "roles": role_items,
+            "cumulative": cumulative,
+            "sources": sources,
+            "_source": settings.copilot_model,
+        }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Copilot role-deliverable generation fell back: %s", exc)
         fallback = _heuristic_role_deliverables(intent, title, roles, definition_of_done)

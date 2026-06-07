@@ -779,6 +779,7 @@ async def _orchestrate_execution(objective_id: str, run_id: str) -> None:
         run.status = RunStatus.COMPLETED
         run.completed_at = now
         run.deliverable = deliverable_text
+        run.sources = produced.get("sources") or []
         session.add(run)
         # Execution steps carry the ACTUAL produced work, so the evidence the
         # validator, governance, and settlement-authorization review IS the
@@ -806,6 +807,30 @@ async def _orchestrate_execution(objective_id: str, run_id: str) -> None:
                     title="Final integrated deliverable",
                     status=StepStatus.COMPLETED,
                     output=deliverable_text,
+                )
+            )
+            idx += 1
+        # Proof-of-work as evidence: the sources the agents actually fetched (with
+        # content hashes). This is verifiable grounding the validator/criteria can
+        # credit, not asserted citations.
+        ok_sources = [s for s in (run.sources or []) if s.get("ok")]
+        if ok_sources:
+            lines = [
+                f"- {s.get('url')} (sha256 {str(s.get('sha256') or '')[:16]}…, "
+                f"{s.get('bytes')} bytes, fetched {s.get('fetched_at')})"
+                for s in ok_sources
+            ]
+            session.add(
+                ExecutionStep(
+                    run_id=run.id,
+                    index=idx,
+                    title="Sources retrieved (proof of work)",
+                    status=StepStatus.COMPLETED,
+                    output=(
+                        f"{len(ok_sources)} source(s) fetched live during execution, "
+                        "each bound to a sha256 of the retrieved content:\n"
+                        + "\n".join(lines)
+                    ),
                 )
             )
             idx += 1
@@ -2176,6 +2201,7 @@ def _execution_out(
         started_at=run.started_at,
         completed_at=run.completed_at,
         deliverable=run.deliverable,
+        sources=run.sources or [],
         steps=[
             ExecutionStepOut(
                 id=s.id,

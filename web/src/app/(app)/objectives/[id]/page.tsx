@@ -455,6 +455,52 @@ export default async function ObjectiveDetailPage({
             </Panel>
           )}
 
+          {/* Proof of work — sources the agents actually fetched, content-hashed */}
+          {execution?.sources && execution.sources.length > 0 && (
+            <Panel className="mt-4">
+              <PanelHeader
+                title="Sources · proof of work"
+                meta={`${execution.sources.filter((s) => s.ok).length} fetched`}
+              />
+              <PanelBody className="space-y-2">
+                <p className="text-[12px] text-muted">
+                  Retrieved live during execution. Each source is bound to a
+                  sha256 of its content, so the deliverable&apos;s grounding is
+                  verifiable — not asserted.
+                </p>
+                {execution.sources.map((s, i) => (
+                  <div
+                    key={`${s.url}-${i}`}
+                    className="rounded-lg border border-border bg-background px-3.5 py-2.5"
+                  >
+                    <div className="flex items-center gap-2">
+                      <StatusPill tone={s.ok ? "success" : "failure"}>
+                        {s.ok ? "ok" : "failed"}
+                      </StatusPill>
+                      <a
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-w-0 flex-1 truncate text-[13px] font-medium text-foreground hover:text-accent"
+                      >
+                        {s.title || s.url}
+                      </a>
+                    </div>
+                    {s.ok && (
+                      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-operational text-[10px] uppercase tracking-wider text-muted">
+                        {s.sha256 && <span>sha256 {s.sha256.slice(0, 16)}…</span>}
+                        {typeof s.bytes === "number" && <span>{s.bytes} bytes</span>}
+                        {s.fetched_at && (
+                          <span>{new Date(s.fetched_at).toLocaleString()}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </PanelBody>
+            </Panel>
+          )}
+
           {/* Per-agent results — each role/agent's own contribution */}
           {agentResults.length > 0 && (
             <Panel className="mt-4">

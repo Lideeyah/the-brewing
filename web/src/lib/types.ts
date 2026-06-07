@@ -56,12 +56,23 @@ export interface ExecutionStep {
   output?: string | null;
 }
 
+export interface SourceProof {
+  url: string;
+  ok: boolean;
+  status?: number | null;
+  title?: string | null;
+  sha256?: string | null;
+  bytes?: number | null;
+  fetched_at?: string | null;
+}
+
 export interface ExecutionRun {
   id: string;
   status: string;
   started_at?: string | null;
   completed_at?: string | null;
   deliverable?: string | null;
+  sources?: SourceProof[];
   steps: ExecutionStep[];
 }
 
