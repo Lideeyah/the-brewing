@@ -261,3 +261,24 @@ def evidence_summary(evidence: list[Evidence]) -> dict:
         "any_errors": any(e.signals.get("error_markers") for e in evidence),
         "all_strong": bool(evidence) and all(e.quality == "strong" for e in evidence),
     }
+
+
+def grounding_summary(sources: list[dict] | None) -> dict:
+    """Summarize the proof-of-work sources backing a deliverable.
+
+    A *verified* source is one that was fetched successfully AND bound to a
+    sha256 of its retrieved content — the difference between an asserted
+    citation and one a third party can re-fetch and hash-check. This feeds the
+    validator so a free-text deliverable grounded in checkable sources is
+    credited, and one that grounds nothing is flagged as unverifiable.
+    """
+
+    sources = sources or []
+    verified = [s for s in sources if s.get("ok") and s.get("sha256")]
+    return {
+        "sources_total": len(sources),
+        "sources_verified": len(verified),
+        "hash_bound": bool(verified),
+        "grounded": len(verified) > 0,
+        "verified_urls": [s.get("url") for s in verified][:20],
+    }

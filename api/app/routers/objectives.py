@@ -991,9 +991,18 @@ def _objective_evidence_bundle(
 
     step_dicts = _objective_step_dicts(session, obj)
     evidence_objs = oracle.build_evidence(step_dicts)
+    summary = oracle.evidence_summary(evidence_objs)
+    # Ground the summary in the run's proof-of-work sources so the validator can
+    # credit verifiable, hash-bound grounding (or flag its absence).
+    run = session.exec(
+        select(ExecutionRun)
+        .where(ExecutionRun.objective_id == obj.id)
+        .order_by(ExecutionRun.created_at.desc())
+    ).first()
+    summary["grounding"] = oracle.grounding_summary(run.sources if run else [])
     return (
         [e.to_dict() for e in evidence_objs],
-        oracle.evidence_summary(evidence_objs),
+        summary,
     )
 
 
@@ -1435,6 +1444,9 @@ async def evaluate_governance_route(
     evidence = oracle.build_evidence(step_dicts)
     evidence_block = oracle.render_evidence_block(evidence)
     evidence_summary = oracle.evidence_summary(evidence)
+    evidence_summary["grounding"] = oracle.grounding_summary(
+        run.sources if run else []
+    )
 
     result = await copilot.evaluate_governance(
         intent=obj.intent,

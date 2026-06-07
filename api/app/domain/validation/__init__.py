@@ -222,6 +222,44 @@ def assess(evidence: list[dict], evidence_summary: dict) -> tuple[str, float, st
             "evidence is thin but non-conflicting."
         )
 
+    # Proof-of-work grounding: a deliverable backed by sources that were fetched
+    # live and bound to a content sha256 is independently checkable, so it earns
+    # confidence. An unstructured deliverable that grounds nothing is, by the
+    # same standard, unverifiable — the validator lowers its certainty and says
+    # so rather than rubber-stamping asserted claims.
+    grounding = evidence_summary.get("grounding") or {}
+    verified = int(grounding.get("sources_verified", 0) or 0)
+    if verified > 0:
+        conf = min(0.99, conf + min(0.06, 0.02 * verified))
+        reason += (
+            f" Grounded in {verified} content-hashed source(s) fetched during "
+            "execution, so the deliverable's claims are independently checkable."
+        )
+        findings.append(
+            {
+                "step_index": None,
+                "step_title": "Proof-of-work grounding",
+                "output_kind": "grounding",
+                "quality": "strong",
+                "errors": False,
+            }
+        )
+    elif evidence_summary.get("unstructured_present"):
+        conf = max(0.20, conf - 0.10)
+        reason += (
+            " No sources were fetched and content-hashed during execution; the "
+            "free-text claims are not independently verifiable."
+        )
+        findings.append(
+            {
+                "step_index": None,
+                "step_title": "Proof-of-work grounding",
+                "output_kind": "grounding",
+                "quality": "missing",
+                "errors": False,
+            }
+        )
+
     return rec, round(max(0.20, min(0.99, conf)), 2), reason, findings
 
 

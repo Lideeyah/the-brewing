@@ -154,13 +154,30 @@ def _derive_risks(
                 }
             )
         if evidence_summary.get("unstructured_present"):
-            risks.append(
-                {
-                    "category": "evidence",
-                    "severity": "low",
-                    "detail": "Outcome rests on unstructured transcripts that are harder to verify independently.",
-                }
-            )
+            grounding = evidence_summary.get("grounding") or {}
+            verified = int(grounding.get("sources_verified", 0) or 0)
+            if verified > 0:
+                risks.append(
+                    {
+                        "category": "evidence",
+                        "severity": "low",
+                        "detail": (
+                            f"Outcome is unstructured but grounded in {verified} "
+                            "content-hashed source(s) that can be re-fetched and verified."
+                        ),
+                    }
+                )
+            else:
+                risks.append(
+                    {
+                        "category": "evidence",
+                        "severity": "medium",
+                        "detail": (
+                            "Outcome rests on unstructured prose with no fetched, "
+                            "content-hashed sources — claims cannot be independently verified."
+                        ),
+                    }
+                )
     if recommendation == "rejected" and not risks:
         risks.append(
             {
