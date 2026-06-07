@@ -17,16 +17,28 @@ from app.config import get_settings
 from app.db import get_session
 from app.models import (
     AgentIdentity,
+    AuditReview,
+    EscrowState,
+    EscrowStatus,
     Feedback,
     Objective,
+    ObjectiveStatus,
+    RoleStatus,
     Settlement,
     SettlementStatus,
     User,
+    WorkflowRole,
     Workspace,
 )
+from app.domain import registry, requester, validation
+from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
-from app.domain.settlement.provider import WalletRef
+from app.domain.settlement.fees import quote_settlement_fee
+from app.domain.settlement.provider import EscrowRef, WalletRef
 from app.schemas import (
+    AdminDisputeOut,
+    AdminDisputeResolveIn,
+    AdminDisputeResolveOut,
     AdminOverviewOut,
     AdminRecentObjective,
     AdminRecentSettlement,
@@ -34,6 +46,8 @@ from app.schemas import (
     FeeWithdrawIn,
     FeeWithdrawOut,
 )
+
+_USDC_QUANT = Decimal("0.000001")
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -207,3 +221,262 @@ def withdraw_fees(
         destination_address=dest,
         explorer_url=result.explorer_url,
     )
+
+
+# --- Dispute arbitration ----------------------------------------------------
+# The arbiter is a network identity DISTINCT from the requester. This is the
+# whole point of routing a rejection of validator-passed work to a held dispute
+# rather than a unilateral slash: the party that rejected the work cannot also be
+# the one who reclaims (or frees) the capital. The admin console — gated by the
+# shared secret, no product login — is that neutral arbiter surface.
+
+
+@router.get("/disputes", response_model=list[AdminDisputeOut])
+def list_disputes(
+    _: bool = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> list[AdminDisputeOut]:
+    objectives = session.exec(
+        select(Objective)
+        .where(Objective.status == ObjectiveStatus.DISPUTED)
+        .order_by(Objective.updated_at.desc())
+    ).all()
+    ws_by_id = {w.id: w for w in session.exec(select(Workspace)).all()}
+    out: list[AdminDisputeOut] = []
+    for obj in objectives:
+        escrow = session.exec(
+            select(EscrowState)
+            .where(EscrowState.objective_id == obj.id)
+            .order_by(EscrowState.created_at.desc())
+        ).first()
+        val = validation.latest_record(session, obj.id)
+        review = session.exec(
+            select(AuditReview)
+            .where(AuditReview.objective_id == obj.id)
+            .order_by(AuditReview.created_at.desc())
+        ).first()
+        ws = ws_by_id.get(obj.workspace_id)
+        out.append(
+            AdminDisputeOut(
+                objective_id=obj.id,
+                title=obj.title,
+                workspace=ws.name if ws else None,
+                workspace_id=obj.workspace_id,
+                held_usdc=(escrow.amount_usdc if escrow else None) or "0",
+                validator_recommendation=val.recommendation if val else None,
+                validator_confidence=val.confidence if val else None,
+                reviewer_rationale=review.notes if review else None,
+                requester_reputation_score=ws.requester_reputation_score if ws else None,
+                disputes_raised=ws.disputes_raised if ws else 0,
+                disputes_lost=ws.disputes_lost if ws else 0,
+                created_at=obj.updated_at,
+            )
+        )
+    return out
+
+
+@router.post("/disputes/{objective_id}/resolve", response_model=AdminDisputeResolveOut)
+def resolve_dispute(
+    objective_id: str,
+    body: AdminDisputeResolveIn,
+    _: bool = Depends(require_admin),
+    session: Session = Depends(get_session),
+) -> AdminDisputeResolveOut:
+    """Arbiter-authoritative resolution of a held dispute.
+
+    ``release`` pays the executor (the independent validator was right; the
+    rejection was bad faith). ``uphold_rejection`` slashes the held escrow to the
+    neutral pool (the rejection stands) — it is never refunded to the requester,
+    so even a legitimate rejection cannot be used to take the result for free.
+    """
+    resolution = (body.resolution or "").strip().lower()
+    if resolution not in ("release", "uphold_rejection"):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="resolution must be 'release' or 'uphold_rejection'.",
+        )
+
+    obj = session.get(Objective, objective_id)
+    if obj is None or obj.status != ObjectiveStatus.DISPUTED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Objective is not in a disputed state.",
+        )
+    escrow = session.exec(
+        select(EscrowState)
+        .where(EscrowState.objective_id == obj.id)
+        .order_by(EscrowState.created_at.desc())
+    ).first()
+    if escrow is None or escrow.status != EscrowStatus.LOCKED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No held escrow is available to resolve.",
+        )
+    try:
+        amount = Decimal(escrow.amount_usdc or "0").quantize(_USDC_QUANT)
+    except (InvalidOperation, TypeError):
+        amount = Decimal("0")
+
+    s = get_settings()
+    provider = get_settlement_provider()
+    now = datetime.now(timezone.utc)
+    rationale = (body.rationale or "").strip()
+
+    if resolution == "release":
+        # The validator was upheld: pay the executor, net of the standard fee.
+        quote = quote_settlement_fee(amount)
+        fee = quote.fee_usdc
+        net = (amount - fee).quantize(_USDC_QUANT)
+        payout = _resolve_dispute_payout(provider, session, obj)
+        transfer = provider.release_escrow(
+            EscrowRef(
+                provider_escrow_id=escrow.provider_escrow_id or "",
+                address=escrow.address or "",
+                amount=net,
+            ),
+            payout,
+        )
+        escrow.status = EscrowStatus.RELEASED
+        escrow.settle_tx_ref = transfer.tx_ref
+        session.add(escrow)
+        session.add(
+            Settlement(
+                objective_id=obj.id,
+                status=SettlementStatus.SETTLED,
+                amount_usdc=str(net),
+                fee_usdc=str(fee),
+                fee_basis=f"dispute released by arbiter — {quote.basis}",
+                payout_tx_ref=transfer.tx_ref,
+            )
+        )
+        if s.platform_fee_wallet_address and fee > 0:
+            try:
+                provider.collect_fee(
+                    EscrowRef(
+                        provider_escrow_id=escrow.provider_escrow_id or "",
+                        address=escrow.address or "",
+                        amount=fee,
+                    ),
+                    s.platform_fee_wallet_address,
+                    fee,
+                )
+            except Exception:  # noqa: BLE001 — fee sweep is non-blocking
+                pass
+        obj.status = ObjectiveStatus.SETTLED
+        for role in session.exec(
+            select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+        ).all():
+            if role.settlement_status in ("disputed", "pending"):
+                role.validation_status = "passed"
+                role.settlement_status = "settled"
+                role.outcome = role.outcome or "released"
+                role.status = RoleStatus.COMPLETED
+                role.updated_at = now
+                session.add(role)
+        # Rejection was overturned — bad faith on the requester's record.
+        ws = requester.record_outcome(session, obj.workspace_id, requester.DISPUTE_LOST)
+        explorer = transfer.explorer_url
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="dispute.resolved.released",
+            message=(
+                f"Arbiter released {net} USDC to the executor: the independent "
+                "validator passed the work, so the rejection was overturned."
+                + (f" Rationale: {rationale}" if rationale else "")
+            ),
+            actor="arbiter",
+            data={"net_usdc": str(net), "fee_usdc": str(fee)},
+        )
+        result_amount = net
+        outcome_status = ObjectiveStatus.SETTLED.value
+    else:
+        # The rejection stands: slash to the neutral pool, never the requester.
+        pool_addr = (
+            s.slash_pool_wallet_address or s.platform_fee_wallet_address or ""
+        ).strip()
+        slash_dest = (
+            WalletRef(
+                provider_wallet_id="",
+                address=pool_addr,
+                blockchain=s.circle_blockchain,
+            )
+            if pool_addr
+            else _resolve_dispute_payout(provider, session, obj)
+        )
+        transfer = provider.slash_escrow(
+            EscrowRef(
+                provider_escrow_id=escrow.provider_escrow_id or "",
+                address=escrow.address or "",
+                amount=amount,
+            ),
+            slash_dest,
+        )
+        escrow.status = EscrowStatus.SLASHED
+        escrow.settle_tx_ref = transfer.tx_ref
+        session.add(escrow)
+        session.add(
+            Settlement(
+                objective_id=obj.id,
+                status=SettlementStatus.SLASHED,
+                amount_usdc=str(amount),
+                fee_usdc="0",
+                fee_basis="dispute upheld by arbiter — slashed to neutral pool",
+                payout_tx_ref=transfer.tx_ref,
+            )
+        )
+        obj.status = ObjectiveStatus.SLASHED
+        for role in session.exec(
+            select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
+        ).all():
+            if role.settlement_status in ("disputed", "pending"):
+                role.validation_status = "failed"
+                role.settlement_status = "slashed"
+                role.outcome = role.outcome or "slashed"
+                role.updated_at = now
+                session.add(role)
+        # Rejection upheld — a legitimate dispute, no bad-faith penalty.
+        ws = requester.record_outcome(session, obj.workspace_id, requester.DISPUTE_UPHELD)
+        explorer = transfer.explorer_url
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="dispute.resolved.slashed",
+            message=(
+                f"Arbiter upheld the rejection: {amount} USDC slashed to the "
+                "neutral pool (not refunded to the requester)."
+                + (f" Rationale: {rationale}" if rationale else "")
+            ),
+            actor="arbiter",
+            data={"slashed_usdc": str(amount), "to_pool": bool(pool_addr)},
+        )
+        result_amount = amount
+        outcome_status = ObjectiveStatus.SLASHED.value
+
+    obj.updated_at = now
+    session.add(obj)
+    session.commit()
+    return AdminDisputeResolveOut(
+        ok=True,
+        objective_id=obj.id,
+        resolution=resolution,
+        outcome_status=outcome_status,
+        amount_usdc=str(result_amount),
+        explorer_url=explorer,
+        requester_reputation_score=ws.requester_reputation_score if ws else None,
+    )
+
+
+def _resolve_dispute_payout(provider, session: Session, obj: Objective) -> WalletRef:
+    """Where a dispute release lands — the executor's verified payout address if
+    one exists, otherwise a freshly provisioned provider wallet."""
+    if obj.agent_id:
+        agent = session.get(AgentIdentity, obj.agent_id)
+        address = registry.resolve_verified_payout_address(agent)
+        if address:
+            return WalletRef(
+                provider_wallet_id="",
+                address=address,
+                blockchain=(agent.payout_blockchain if agent else "") or "",
+            )
+    return provider.provision_treasury_wallet(f"dispute-payout-{obj.id}")

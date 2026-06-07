@@ -872,6 +872,41 @@ class AdminOverviewOut(BaseModel):
     platform_fee_balance_usdc: str | None = None  # live on-chain balance
 
 
+class AdminDisputeOut(BaseModel):
+    """A held dispute awaiting arbiter resolution."""
+
+    objective_id: str
+    title: str
+    workspace: str | None = None
+    workspace_id: str
+    held_usdc: str
+    validator_recommendation: str | None = None
+    validator_confidence: float | None = None
+    reviewer_rationale: str | None = None
+    requester_reputation_score: float | None = None
+    disputes_raised: int = 0
+    disputes_lost: int = 0
+    created_at: datetime
+
+
+class AdminDisputeResolveIn(BaseModel):
+    # "release" → pay the executor (validator upheld); "uphold_rejection" →
+    # slash held escrow to the neutral pool (rejection stands).
+    resolution: str
+    rationale: str | None = None
+
+
+class AdminDisputeResolveOut(BaseModel):
+    ok: bool
+    objective_id: str
+    resolution: str
+    outcome_status: str  # resulting objective status
+    amount_usdc: str
+    explorer_url: str | None = None
+    requester_reputation_score: float | None = None
+    message: str | None = None
+
+
 class FeeWithdrawIn(BaseModel):
     destination_address: str
     amount_usdc: str | None = None  # omit to withdraw the full balance
