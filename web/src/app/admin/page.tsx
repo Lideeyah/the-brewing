@@ -3,9 +3,10 @@ import { redirect } from "next/navigation";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { FeeWallet } from "@/components/admin/fee-wallet";
+import { Disputes } from "@/components/admin/disputes";
 import { adminLogout } from "@/lib/admin-actions";
 import { adminApiGet, isAdminAuthed } from "@/lib/admin-server";
-import type { AdminOverview, FeedbackItem } from "@/lib/types";
+import type { AdminDispute, AdminOverview, FeedbackItem } from "@/lib/types";
 
 function Metric({
   label,
@@ -32,11 +33,13 @@ function Metric({
 export default async function AdminPage() {
   if (!(await isAdminAuthed())) redirect("/admin/login");
 
-  const [ov, feedbackRaw] = await Promise.all([
+  const [ov, feedbackRaw, disputesRaw] = await Promise.all([
     adminApiGet<AdminOverview>("/admin/overview"),
     adminApiGet<FeedbackItem[]>("/admin/feedback"),
+    adminApiGet<AdminDispute[]>("/admin/disputes"),
   ]);
   const feedback = feedbackRaw ?? [];
+  const disputes = disputesRaw ?? [];
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-6">
@@ -86,6 +89,19 @@ export default async function AdminPage() {
               address={ov.platform_fee_wallet_address}
               balance={ov.platform_fee_balance_usdc}
             />
+          </Panel>
+
+          {/* Dispute arbitration — held escrow awaiting a neutral ruling */}
+          <Panel>
+            <PanelHeader
+              title="Disputes"
+              meta={
+                disputes.length === 0
+                  ? "none open"
+                  : `${disputes.length} held · arbiter ruling required`
+              }
+            />
+            <Disputes disputes={disputes} />
           </Panel>
 
           <Panel>

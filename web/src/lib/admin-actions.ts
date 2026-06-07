@@ -60,3 +60,34 @@ export async function withdrawFees(formData: FormData): Promise<WithdrawState> {
     explorer: res.data.explorer_url ?? undefined,
   };
 }
+
+type ResolveState =
+  | { ok: true; message: string; explorer?: string }
+  | { ok: false; message: string };
+
+export async function resolveDispute(formData: FormData): Promise<ResolveState> {
+  const objectiveId = (formData.get("objective_id") as string | null)?.trim() ?? "";
+  const resolution = (formData.get("resolution") as string | null)?.trim() ?? "";
+  const rationale = (formData.get("rationale") as string | null)?.trim() || undefined;
+  if (!objectiveId || !resolution) {
+    return { ok: false, message: "Missing objective or resolution." };
+  }
+  const res = await adminApiPost<{
+    ok: boolean;
+    resolution: string;
+    outcome_status: string;
+    amount_usdc: string;
+    explorer_url?: string | null;
+    requester_reputation_score?: number | null;
+    message?: string | null;
+  }>(`/admin/disputes/${objectiveId}/resolve`, { resolution, rationale });
+  if (!res.ok) return { ok: false, message: res.error };
+  if (!res.data.ok) return { ok: false, message: res.data.message ?? "Resolution failed." };
+  revalidatePath("/admin");
+  const verb = res.data.resolution === "release" ? "Released" : "Slashed";
+  return {
+    ok: true,
+    message: `${verb} ${res.data.amount_usdc} USDC — objective ${res.data.outcome_status}.`,
+    explorer: res.data.explorer_url ?? undefined,
+  };
+}

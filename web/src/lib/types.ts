@@ -641,3 +641,18 @@ export interface FeedbackItem {
   status: string;
   created_at: string;
 }
+
+export interface AdminDispute {
+  objective_id: string;
+  title: string;
+  workspace?: string | null;
+  workspace_id: string;
+  held_usdc: string;
+  validator_recommendation?: string | null;
+  validator_confidence?: number | null;
+  reviewer_rationale?: string | null;
+  requester_reputation_score?: number | null;
+  disputes_raised: number;
+  disputes_lost: number;
+  created_at: string;
+}
