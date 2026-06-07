@@ -120,6 +120,20 @@ class Workspace(SQLModel, table=True):
     # structures an objective.
     governance_require_auditor: bool = Field(default=True)
     governance_human_authoritative: bool = Field(default=True)
+
+    # --- Requester-side reputation (two-sided trust) -----------------------
+    # Brewing's reputation is not one-directional. A requester who routinely
+    # rejects work the independent validator passed — to reclaim capital and use
+    # the result for free — is exhibiting bad faith, and that must be visible and
+    # costly the same way a failing executor's record is. These counters drive a
+    # good-faith score; an arbiter overruling a rejection ("dispute_lost") is the
+    # strong negative signal.
+    objectives_settled: int = Field(default=0)  # paid out in good faith
+    disputes_raised: int = Field(default=0)  # rejected validator-passed work
+    disputes_lost: int = Field(default=0)  # arbiter released to the executor
+    disputes_upheld: int = Field(default=0)  # arbiter agreed the rejection
+    requester_reputation_score: float = Field(default=100.0)  # 0..100; 100 = unrated/clean
+
     created_at: datetime = Field(default_factory=_now)
 
 

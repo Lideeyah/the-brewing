@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import engine, get_session
-from app.domain import copilot, oracle, registry, validation
+from app.domain import copilot, oracle, registry, requester, validation
 from app.domain import workflow as workflow_domain
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
@@ -1797,6 +1797,10 @@ def settle_objective(
                 )
             )
             obj.status = ObjectiveStatus.SETTLED
+            try:
+                requester.record_outcome(session, obj.workspace_id, requester.SETTLED)
+            except Exception as exc:  # noqa: BLE001 — never block settlement
+                logger.warning("requester reputation (settled) failed: %s", exc)
             log_event(
                 session,
                 objective_id=obj.id,
@@ -1863,6 +1867,11 @@ def settle_objective(
                 except Exception as exc:  # noqa: BLE001 — non-blocking
                     logger.warning("Platform fee sweep failed: %s", exc)
             obj.status = ObjectiveStatus.SETTLED
+            # Good-faith payment repairs the requester's two-sided reputation.
+            try:
+                requester.record_outcome(session, obj.workspace_id, requester.SETTLED)
+            except Exception as exc:  # noqa: BLE001 — never block settlement
+                logger.warning("requester reputation (settled) failed: %s", exc)
             # The objective settled as a whole — reflect that on its sub-task rows
             # so the per-role allocation area doesn't read as stuck "pending".
             for role in session.exec(
@@ -1933,6 +1942,15 @@ def settle_objective(
                 obj.status = ObjectiveStatus.DISPUTED
                 obj.updated_at = datetime.now(timezone.utc)
                 session.add(obj)
+                # Rejecting validator-passed work opens a dispute on the
+                # requester's record; the arbiter's resolution later decides
+                # whether it counts as bad faith.
+                try:
+                    requester.record_outcome(
+                        session, obj.workspace_id, requester.DISPUTE_RAISED
+                    )
+                except Exception as exc:  # noqa: BLE001 — never block settlement
+                    logger.warning("requester reputation (dispute) failed: %s", exc)
                 for role in session.exec(
                     select(WorkflowRole).where(WorkflowRole.objective_id == obj.id)
                 ).all():

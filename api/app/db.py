@@ -78,6 +78,11 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "onboarding_completed": "BOOLEAN NOT NULL DEFAULT 1",
         "governance_require_auditor": "BOOLEAN NOT NULL DEFAULT 1",
         "governance_human_authoritative": "BOOLEAN NOT NULL DEFAULT 1",
+        "objectives_settled": "INTEGER NOT NULL DEFAULT 0",
+        "disputes_raised": "INTEGER NOT NULL DEFAULT 0",
+        "disputes_lost": "INTEGER NOT NULL DEFAULT 0",
+        "disputes_upheld": "INTEGER NOT NULL DEFAULT 0",
+        "requester_reputation_score": "FLOAT NOT NULL DEFAULT 100.0",
     },
     "workflowrole": {
         "outcome": "VARCHAR",
