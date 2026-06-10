@@ -38,4 +38,10 @@ def get_settlement_provider() -> SettlementProvider:
         from app.domain.settlement.circle_provider import CircleSettlementProvider
 
         return CircleSettlementProvider()
+    if name in ("noncustodial", "non_custodial", "noncustodial-solana"):
+        from app.domain.settlement.noncustodial_provider import (
+            NonCustodialSolanaProvider,
+        )
+
+        return NonCustodialSolanaProvider()
     raise ValueError(f"Unknown settlement provider: {name!r}")

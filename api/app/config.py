@@ -82,6 +82,10 @@ class Settings(BaseSettings):
     # (base58 secret) before depositing USDC. Blank = workaround disabled.
     ata_funder_secret: str = ""
     solana_rpc_url: str = "https://api.devnet.solana.com"
+    # USDC SPL mint for the active chain. Required only by the non-custodial
+    # provider to read tenant-wallet balances directly from the chain. Devnet
+    # USDC by default; set the mainnet mint when moving to SOL.
+    usdc_mint: str = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 
     # Platform revenue wallet. When set, the settlement fee is swept here on
     # release instead of being left in the per-objective escrow wallet. Blank =

@@ -67,3 +67,46 @@ A three-stage migration, each independently shippable, none requiring a rewrite 
 ## 6. Verdict
 
 The non-custodial *architecture* is sound and already in place as an abstraction; the *implementation* is the remaining work. The product's custody claims are currently honest because the UI is custody-aware. Closing the gap is a well-scoped, additive effort that the existing seams were explicitly designed to accommodate.
+
+---
+
+## 7. Implementation status (update)
+
+Stage B has partially landed. `app/domain/settlement/noncustodial_provider.py`
+implements `NonCustodialSolanaProvider` against the existing `NonCustodialSettlementProvider`
+seam, selectable with `SETTLEMENT_PROVIDER=noncustodial`. It is deliberately honest
+about the custody boundary rather than faking it:
+
+- **Real, key-free reads.** `get_balance` (live USDC balance via Solana
+  `getTokenAccountsByOwner`) and `get_transaction_proof` (signature status +
+  explorer URL via `getSignatureStatuses`) are genuine on-chain RPC calls. No
+  keys, no custody.
+- **Refused custody paths.** `provision_treasury_wallet`, `deploy_tenant_escrow`,
+  `lock_escrow`, `release_escrow`, and `slash_escrow` raise `SettlementConfigError`
+  with a message naming what the *controller wallet* must authorize. Signing these
+  server-side would re-introduce custody — the exact property this model removes —
+  so the provider refuses by design.
+
+### What remains (and why it needs the operator's accounts/decisions)
+
+- **Stage A — the on-chain escrow construction.** The governance-gated,
+  controller-executed escrow (tenant-owned account with a Brewing governance
+  co-sign + timelock/veto, per §4–§5) is the real work. It requires choosing the
+  construction and deploying it; it cannot be stubbed without a tenant wallet and
+  a deployed program/account. **Needs operator decision + keys.**
+- **Controller authorization flow.** Client-side signing or a delegated session
+  key so the controller wallet authorizes release/slash. **Needs the tenant's
+  wallet.**
+- **Mainnet.** Flip `CIRCLE_BLOCKCHAIN=SOL`, set `USDC_MINT` to the mainnet USDC
+  mint, and fund/configure real wallets. The read paths above already key off
+  `circle_blockchain` for the correct explorer cluster and off `usdc_mint` for the
+  balance read, so they work on mainnet once configured — but real value movement
+  is gated on Stage A. **Needs operator's mainnet accounts + funds.**
+
+External agent supply is already in place on the registry side: third-party
+developers register agents (`POST /agents`), mark them `discoverable`, and bind a
+payout address they have **proven control of** via the challenge/verify
+proof-of-control flow (`/agents/{id}/payout/challenge` → `/verify`). Settlement only
+ever releases to a verified payout address. The remaining supply-side work is
+cross-workspace discovery/hiring, which is a product decision rather than a missing
+primitive.
