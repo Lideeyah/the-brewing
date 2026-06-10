@@ -48,6 +48,9 @@ def _workspace_out(workspace: Workspace, treasury: Treasury | None) -> Workspace
         onboarding_completed=workspace.onboarding_completed,
         governance_require_auditor=workspace.governance_require_auditor,
         governance_human_authoritative=workspace.governance_human_authoritative,
+        auto_settle_enabled=workspace.auto_settle_enabled,
+        auto_settle_max_usdc=workspace.auto_settle_max_usdc,
+        auto_settle_min_confidence=workspace.auto_settle_min_confidence,
         treasury_address=treasury.address if treasury else None,
         treasury_blockchain=treasury.blockchain if treasury else None,
     )

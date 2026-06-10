@@ -134,6 +134,17 @@ class Workspace(SQLModel, table=True):
     disputes_upheld: int = Field(default=0)  # arbiter agreed the rejection
     requester_reputation_score: float = Field(default=100.0)  # 0..100; 100 = unrated/clean
 
+    # --- Progressive automation (policy-gated auto-settle) -----------------
+    # The network earns autonomy as trust accrues. When enabled, an objective
+    # whose evidence clears the bar — independent validator APPROVED at/above the
+    # confidence floor, all success criteria satisfied, grounded in proof-of-work,
+    # value within the cap — settles automatically, with the human reserved for
+    # the borderline and high-value cases. The human stays authoritative: they
+    # set the policy and can disable it. Off by default.
+    auto_settle_enabled: bool = Field(default=False)
+    auto_settle_max_usdc: str | None = None  # None = no cap
+    auto_settle_min_confidence: float = Field(default=0.85)
+
     created_at: datetime = Field(default_factory=_now)
 
 

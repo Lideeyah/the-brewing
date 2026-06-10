@@ -83,6 +83,9 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "disputes_lost": "INTEGER NOT NULL DEFAULT 0",
         "disputes_upheld": "INTEGER NOT NULL DEFAULT 0",
         "requester_reputation_score": "FLOAT NOT NULL DEFAULT 100.0",
+        "auto_settle_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+        "auto_settle_max_usdc": "VARCHAR",
+        "auto_settle_min_confidence": "FLOAT NOT NULL DEFAULT 0.85",
     },
     "workflowrole": {
         "outcome": "VARCHAR",

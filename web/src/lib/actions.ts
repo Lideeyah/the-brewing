@@ -532,6 +532,40 @@ export async function activateOnboarding() {
   redirect("/onboarding/orientation");
 }
 
+type AutomationState =
+  | { ok: true; message: string }
+  | { ok: false; message: string };
+
+/** Settings — update the workspace's progressive-automation policy. */
+export async function updateAutomationPolicy(
+  _prev: AutomationState | null,
+  formData: FormData,
+): Promise<AutomationState> {
+  const enabled = formData.get("auto_settle_enabled") === "on";
+  const capRaw = (formData.get("auto_settle_max_usdc") as string | null)?.trim() ?? "";
+  const confRaw = (formData.get("auto_settle_min_confidence") as string | null)?.trim() ?? "";
+  const confidence = confRaw ? Number(confRaw) : undefined;
+  if (confidence != null && (Number.isNaN(confidence) || confidence < 50 || confidence > 99)) {
+    return { ok: false, message: "Confidence floor must be between 50 and 99%." };
+  }
+  try {
+    await apiPatch<MeWorkspace>("/workspaces/current", {
+      auto_settle_enabled: enabled,
+      auto_settle_max_usdc: capRaw, // "" clears the cap server-side
+      auto_settle_min_confidence: confidence != null ? confidence / 100 : undefined,
+    });
+  } catch {
+    return { ok: false, message: "Could not update the automation policy." };
+  }
+  revalidatePath("/settings");
+  return {
+    ok: true,
+    message: enabled
+      ? "Auto-settle is on. Objectives that clear the bar settle without a manual decision."
+      : "Auto-settle is off. Every objective awaits a manual decision.",
+  };
+}
+
 /** Product feedback / support: any signed-in user submits; admins read it. */
 export async function submitFeedback(formData: FormData) {
   const message = (formData.get("message") as string | null)?.trim();

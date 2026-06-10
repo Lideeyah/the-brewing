@@ -102,6 +102,15 @@ def update_current_workspace(
         workspace.governance_require_auditor = body.governance_require_auditor
     if body.governance_human_authoritative is not None:
         workspace.governance_human_authoritative = body.governance_human_authoritative
+    if body.auto_settle_enabled is not None:
+        workspace.auto_settle_enabled = body.auto_settle_enabled
+    if body.auto_settle_max_usdc is not None:
+        workspace.auto_settle_max_usdc = body.auto_settle_max_usdc.strip() or None
+    if body.auto_settle_min_confidence is not None:
+        # Keep the floor sane: a confidence bar in [0.5, 0.99].
+        workspace.auto_settle_min_confidence = max(
+            0.5, min(0.99, body.auto_settle_min_confidence)
+        )
 
     session.add(workspace)
     treasury = workspace_service.get_treasury(session, workspace.id)

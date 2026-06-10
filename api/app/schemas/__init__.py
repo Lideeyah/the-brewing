@@ -44,6 +44,9 @@ class WorkspaceOut(BaseModel):
     onboarding_completed: bool = False
     governance_require_auditor: bool = True
     governance_human_authoritative: bool = True
+    auto_settle_enabled: bool = False
+    auto_settle_max_usdc: str | None = None
+    auto_settle_min_confidence: float = 0.85
     treasury_address: str | None = None
     treasury_blockchain: str | None = None
 
@@ -57,6 +60,9 @@ class WorkspaceUpdateIn(BaseModel):
     operational_type: str | None = None
     governance_require_auditor: bool | None = None
     governance_human_authoritative: bool | None = None
+    auto_settle_enabled: bool | None = None
+    auto_settle_max_usdc: str | None = None
+    auto_settle_min_confidence: float | None = None
 
 
 class SessionOut(BaseModel):

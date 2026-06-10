@@ -19,7 +19,7 @@ from sqlmodel import Session, select
 
 from app.auth import get_current_user
 from app.db import engine, get_session
-from app.domain import copilot, oracle, registry, requester, validation
+from app.domain import automation, copilot, oracle, registry, requester, validation
 from app.domain import workflow as workflow_domain
 from app.domain.governance import log_event
 from app.domain.settlement import get_settlement_provider
@@ -1527,9 +1527,218 @@ async def evaluate_governance_route(
     except Exception as exc:  # noqa: BLE001 — validation must never block the audit
         logger.warning("Independent validation skipped during evaluation: %s", exc)
 
+    # Progressive automation: if the workspace opted in and this objective clears
+    # the policy bar, settle it now without waiting for a human decision. The
+    # human stays authoritative — they set the policy and can turn it off — and
+    # anything short of the bar still routes to a manual decision. Best-effort:
+    # an auto-settle failure leaves the objective UNDER_AUDIT for the human.
+    try:
+        _maybe_auto_settle(session, obj, workspace)
+    except Exception as exc:  # noqa: BLE001 — never block the audit on automation
+        logger.warning("Auto-settle skipped: %s", exc)
+
     session.commit()
     session.refresh(obj)
     return _detail(session, obj)
+
+
+def _maybe_auto_settle(
+    session: Session, obj: Objective, workspace: Workspace
+) -> bool:
+    """Settle an objective under the workspace's standing automation policy.
+
+    Runs right after evaluation. Gates on the *independent* validator's verdict,
+    the per-criterion evidence satisfaction, proof-of-work grounding, and the
+    workspace's confidence floor + value cap (see ``domain.automation``). Only
+    the clean, full-amount release path is automated; anything else falls back to
+    a human decision. Returns True iff it settled.
+    """
+
+    if not workspace.auto_settle_enabled:
+        return False
+    if obj.status != ObjectiveStatus.UNDER_AUDIT:
+        return False
+
+    record = validation.latest_record(session, obj.id)
+    if record is None:
+        return False
+
+    escrow = session.exec(
+        select(EscrowState)
+        .where(EscrowState.objective_id == obj.id)
+        .order_by(EscrowState.created_at.desc())
+    ).first()
+    if escrow is None or escrow.status != EscrowStatus.LOCKED:
+        return False
+
+    # Do not automate once any sub-task has begun settling independently — that
+    # is the partial-accounting path, which stays manual.
+    roles = workflow_domain.get_roles(session, obj.id)
+    if any(
+        r.settlement_status not in ("pending",) for r in roles
+    ):
+        return False
+
+    # Preview the per-criterion evidence verdict without persisting, so the gate
+    # sees exactly what the human decision would record.
+    raw_criteria = obj.governance_config.get("validation_criteria") or []
+    evidence_dicts = _objective_evidence(session, obj)
+    _eval = _latest_evaluation(session, obj.id)
+    findings = _eval.findings if _eval else None
+    if findings:
+        crit_results = validation.criteria.results_from_findings(
+            list(raw_criteria), findings, evidence_dicts
+        )
+    else:
+        crit_results = validation.criteria.evaluate_criteria(
+            list(raw_criteria), evidence_dicts
+        )
+    crit_summary = validation.criteria.summarize_satisfaction(crit_results)
+
+    grounding = (record.evidence_summary or {}).get("grounding") or {}
+
+    decision = automation.evaluate(
+        enabled=workspace.auto_settle_enabled,
+        min_confidence=workspace.auto_settle_min_confidence,
+        max_usdc=workspace.auto_settle_max_usdc,
+        amount_usdc=escrow.amount_usdc,
+        validator_recommendation=record.recommendation,
+        validator_confidence=record.confidence,
+        criteria_all_satisfied=bool(crit_summary.get("all_satisfied")),
+        criteria_total=int(crit_summary.get("total", 0) or 0),
+        grounding_verified_sources=int(grounding.get("sources_verified", 0) or 0),
+    )
+    if not decision.eligible:
+        log_event(
+            session,
+            objective_id=obj.id,
+            kind="automation.deferred",
+            message=(
+                "Auto-settle policy did not clear; awaiting a human decision: "
+                + "; ".join(decision.reasons)
+            ),
+            actor="auto-settle-policy",
+            data={"reasons": decision.reasons},
+        )
+        return False
+
+    # --- Eligible: record the (automated) approval, then release in full -----
+    review = AuditReview(
+        objective_id=obj.id,
+        status=AuditStatus.APPROVED,
+        notes=(
+            "Auto-settled under the workspace automation policy: the independent "
+            f"validator approved at {int(record.confidence * 100)}% confidence, all "
+            "success criteria are satisfied, and the deliverable is grounded in "
+            "content-hashed proof-of-work."
+        ),
+        reviewer_id=None,
+        evaluation_id=_eval.id if _eval else None,
+        recommendation=record.recommendation,
+        overridden=False,
+    )
+    session.add(review)
+    obj.status = ObjectiveStatus.GOVERNANCE_DECISION
+
+    try:
+        validation.reconcile_outcome(session, objective_id=obj.id, approved=True)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-settle reconciliation skipped: %s", exc)
+    try:
+        validation.record_authorization(
+            session,
+            objective_id=obj.id,
+            raw_criteria=list(raw_criteria),
+            evidence=evidence_dicts,
+            approved=True,
+            findings=findings,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-settle authorization skipped: %s", exc)
+
+    provider = get_settlement_provider()
+    try:
+        amount = Decimal(escrow.amount_usdc or "0").quantize(_USDC_QUANT)
+    except (InvalidOperation, TypeError):
+        amount = Decimal("0")
+    quote = quote_settlement_fee(amount)
+    fee = quote.fee_usdc
+    net = (amount - fee).quantize(_USDC_QUANT)
+    payout = _resolve_payout_wallet(
+        provider, session, ref=f"payout-{obj.id}", agent_id=obj.agent_id
+    )
+    transfer = provider.release_escrow(
+        EscrowRef(
+            provider_escrow_id=escrow.provider_escrow_id or "",
+            address=escrow.address or "",
+            amount=net,
+        ),
+        payout,
+    )
+    escrow.status = EscrowStatus.RELEASED
+    escrow.settle_tx_ref = transfer.tx_ref
+    session.add(escrow)
+    session.add(
+        Settlement(
+            objective_id=obj.id,
+            status=SettlementStatus.SETTLED,
+            amount_usdc=str(net),
+            fee_usdc=str(fee),
+            fee_basis=f"auto-settled by policy — {quote.basis}",
+            payout_tx_ref=transfer.tx_ref,
+        )
+    )
+    from app.config import get_settings as _get_settings
+
+    fee_wallet = _get_settings().platform_fee_wallet_address
+    if fee_wallet and fee > 0:
+        try:
+            provider.collect_fee(
+                EscrowRef(
+                    provider_escrow_id=escrow.provider_escrow_id or "",
+                    address=escrow.address or "",
+                    amount=fee,
+                ),
+                fee_wallet,
+                fee,
+            )
+        except Exception as exc:  # noqa: BLE001 — non-blocking
+            logger.warning("Auto-settle fee sweep failed: %s", exc)
+
+    obj.status = ObjectiveStatus.SETTLED
+    obj.updated_at = datetime.now(timezone.utc)
+    session.add(obj)
+    for role in roles:
+        if role.settlement_status == "pending":
+            role.validation_status = "passed"
+            role.settlement_status = "settled"
+            role.outcome = role.outcome or "released"
+            role.status = RoleStatus.COMPLETED
+            role.updated_at = datetime.now(timezone.utc)
+            session.add(role)
+    try:
+        requester.record_outcome(session, obj.workspace_id, requester.SETTLED)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Auto-settle reputation update skipped: %s", exc)
+
+    log_event(
+        session,
+        objective_id=obj.id,
+        kind="automation.auto_settled",
+        message=(
+            f"Auto-settled by policy: released {net} USDC to the executor "
+            f"(fee {fee} USDC, {quote.basis}). No human decision was required — "
+            "the evidence cleared the workspace's standing bar."
+        ),
+        actor="auto-settle-policy",
+        data={
+            "net_usdc": str(net),
+            "fee_usdc": str(fee),
+            "validator_confidence": record.confidence,
+            "reasons": decision.reasons,
+        },
+    )
+    return True
 
 
 @router.post("/{objective_id}/audit/decide", response_model=ObjectiveDetailOut)

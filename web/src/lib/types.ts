@@ -588,6 +588,9 @@ export interface MeWorkspace {
   onboarding_completed: boolean;
   governance_require_auditor: boolean;
   governance_human_authoritative: boolean;
+  auto_settle_enabled: boolean;
+  auto_settle_max_usdc?: string | null;
+  auto_settle_min_confidence: number;
   treasury_address?: string | null;
   treasury_blockchain?: string | null;
 }

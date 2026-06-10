@@ -1,9 +1,10 @@
-import { User as UserIcon, Building2 } from "lucide-react";
+import { User as UserIcon, Building2, Zap } from "lucide-react";
 
 import { Topbar } from "@/components/app/topbar";
 import { Panel, PanelBody, PanelHeader } from "@/components/ui/panel";
 import { StatusPill } from "@/components/ui/status-pill";
 import { SignOutButton } from "@/components/app/sign-out-button";
+import { AutomationPolicy } from "@/components/app/automation-policy";
 import { apiGet } from "@/lib/api";
 import type { Me } from "@/lib/types";
 
@@ -142,6 +143,24 @@ export default async function SettingsPage() {
                       </div>
                     )}
                   </div>
+                </PanelBody>
+              </Panel>
+
+              {/* Progressive automation */}
+              <Panel>
+                <PanelHeader
+                  title="Progressive automation"
+                  meta={
+                    me.workspace.auto_settle_enabled ? "auto-settle on" : "manual decisions"
+                  }
+                  action={<Zap size={14} className="text-accent" />}
+                />
+                <PanelBody>
+                  <AutomationPolicy
+                    enabled={me.workspace.auto_settle_enabled}
+                    maxUsdc={me.workspace.auto_settle_max_usdc}
+                    minConfidence={me.workspace.auto_settle_min_confidence}
+                  />
                 </PanelBody>
               </Panel>
 
