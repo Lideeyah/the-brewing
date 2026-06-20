@@ -1,9 +1,12 @@
+import logging
 from collections.abc import Generator
 
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
+
+logger = logging.getLogger("brewing.db")
 
 settings = get_settings()
 
@@ -30,7 +33,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "auditreview": {
         "evaluation_id": "VARCHAR",
         "recommendation": "VARCHAR",
-        "overridden": "BOOLEAN NOT NULL DEFAULT 0",
+        "overridden": "BOOLEAN NOT NULL DEFAULT FALSE",
     },
     "escrowstate": {
         "lock_tx_hash": "VARCHAR",
@@ -55,7 +58,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
     "agentidentity": {
         "description": "VARCHAR",
         "pricing": "VARCHAR",
-        "discoverable": "BOOLEAN NOT NULL DEFAULT 1",
+        "discoverable": "BOOLEAN NOT NULL DEFAULT TRUE",
         "pricing_model": "VARCHAR NOT NULL DEFAULT 'fixed'",
         "min_objective_value_usdc": "VARCHAR",
         "min_role_compensation_usdc": "VARCHAR",
@@ -64,7 +67,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         # Escrow V1.5 — payout destination + proof-of-control state.
         "payout_address": "VARCHAR",
         "payout_blockchain": "VARCHAR",
-        "payout_address_verified": "BOOLEAN NOT NULL DEFAULT 0",
+        "payout_address_verified": "BOOLEAN NOT NULL DEFAULT FALSE",
         "payout_address_verified_at": "DATETIME",
         "payout_challenge": "VARCHAR",
         "payout_challenge_address": "VARCHAR",
@@ -75,15 +78,15 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         # Existing workspaces are already operational, so backfill them as
         # completed (DEFAULT 1). Brand-new rows inserted by SQLModel use the
         # model default (False) and are routed through onboarding.
-        "onboarding_completed": "BOOLEAN NOT NULL DEFAULT 1",
-        "governance_require_auditor": "BOOLEAN NOT NULL DEFAULT 1",
-        "governance_human_authoritative": "BOOLEAN NOT NULL DEFAULT 1",
+        "onboarding_completed": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "governance_require_auditor": "BOOLEAN NOT NULL DEFAULT TRUE",
+        "governance_human_authoritative": "BOOLEAN NOT NULL DEFAULT TRUE",
         "objectives_settled": "INTEGER NOT NULL DEFAULT 0",
         "disputes_raised": "INTEGER NOT NULL DEFAULT 0",
         "disputes_lost": "INTEGER NOT NULL DEFAULT 0",
         "disputes_upheld": "INTEGER NOT NULL DEFAULT 0",
         "requester_reputation_score": "FLOAT NOT NULL DEFAULT 100.0",
-        "auto_settle_enabled": "BOOLEAN NOT NULL DEFAULT 0",
+        "auto_settle_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
         "auto_settle_max_usdc": "VARCHAR",
         "auto_settle_min_confidence": "FLOAT NOT NULL DEFAULT 0.85",
     },
@@ -93,7 +96,7 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
         "depends_on": "JSON NOT NULL DEFAULT '[]'",
         "success_criteria": "JSON NOT NULL DEFAULT '[]'",
         "required_evidence_kinds": "JSON NOT NULL DEFAULT '[]'",
-        "required": "BOOLEAN NOT NULL DEFAULT 1",
+        "required": "BOOLEAN NOT NULL DEFAULT TRUE",
         "validation_status": "VARCHAR NOT NULL DEFAULT 'pending'",
         "settlement_status": "VARCHAR NOT NULL DEFAULT 'pending'",
     },
@@ -113,14 +116,25 @@ _COLUMN_BACKFILLS: dict[str, dict[str, str]] = {
 def _backfill_columns() -> None:
     inspector = inspect(engine)
     existing_tables = set(inspector.get_table_names())
-    with engine.begin() as conn:
-        for table, columns in _COLUMN_BACKFILLS.items():
-            if table not in existing_tables:
-                continue  # create_all just made it with all columns
-            present = {c["name"] for c in inspector.get_columns(table)}
-            for name, ddl in columns.items():
-                if name not in present:
-                    conn.execute(text(f'ALTER TABLE {table} ADD COLUMN {name} {ddl}'))
+    for table, columns in _COLUMN_BACKFILLS.items():
+        if table not in existing_tables:
+            continue  # create_all just made it with all columns
+        present = {c["name"] for c in inspector.get_columns(table)}
+        for name, ddl in columns.items():
+            if name in present:
+                continue
+            # Each ALTER runs in its own transaction so one bad DDL can never
+            # abort the rest (or, on Postgres, the whole startup). A failure is
+            # logged and skipped rather than crashing the service on boot.
+            try:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(f'ALTER TABLE {table} ADD COLUMN {name} {ddl}')
+                    )
+            except Exception as exc:  # noqa: BLE001 — never fail startup on backfill
+                logger.warning(
+                    "Column backfill skipped: %s.%s (%s): %s", table, name, ddl, exc
+                )
 
 
 def init_db() -> None:
