@@ -1,0 +1,28 @@
+name: keep-alive
+
+# Render's free web service spins down after ~15 minutes of inactivity, adding a
+# ~50s cold-start delay to the next request. This pings the health endpoint on a
+# schedule so the instance stays warm. Note: this is a best-effort mitigation —
+# GitHub's scheduled runners can be delayed under load, and the only *guaranteed*
+# way to keep the service always-on is Render's paid (Starter) instance.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes (margin under the 15-min spin-down)
+  workflow_dispatch: {} # allow a manual ping from the Actions tab
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping the API health endpoint
+        run: |
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 60 \
+              https://the-brewing.onrender.com/health) || code=000
+            echo "attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 15
+          done
+          echo "health check did not return 200 after 3 attempts"
+          exit 1
